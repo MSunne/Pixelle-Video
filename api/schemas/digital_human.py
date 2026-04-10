@@ -1,0 +1,119 @@
+"""
+Digital Human Video Generation API schemas
+"""
+
+from typing import Optional, List, Literal
+from pydantic import BaseModel, Field
+
+
+class DigitalHumanVideoRequest(BaseModel):
+    """数字人口播视频生成请求"""
+    
+    # === 人物素材 ===
+    character_assets: List[str] = Field(
+        ...,
+        description="人物形象图片路径列表（至少需要一张）。先通过 /api/files 接口上传文件，然后在这里传入路径。",
+        min_length=1
+    )
+    
+    # === 模式 ===
+    mode: Literal["digital", "customize"] = Field(
+        "customize",
+        description="生成模式: "
+                    "'customize' = 人物图片 + 自定义文本 → 纯口播视频; "
+                    "'digital' = 人物图片 + 商品图片 → AI 生成的电商带货视频"
+    )
+    
+    # === 商品素材 (用于 digital 模式) ===
+    goods_assets: Optional[List[str]] = Field(
+        None,
+        description="商品图片路径列表（'digital' 模式必选）"
+    )
+    goods_title: Optional[str] = Field(
+        None,
+        description="商品标题/名称（在 'digital' 模式下会被 AI 用来生成解说词）"
+    )
+    
+    # === 旁白文案 ===
+    goods_text: str = Field(
+        "",
+        description="视频旁白文本。在 'customize' 模式下，这就是数字人完整口播的逐字稿。"
+                    "在 'digital' 模式下，如果提供，则按提供的内容读；"
+                    "如果为空，AI 会根据商品图片和标题自动生成一段带货话术。"
+    )
+    
+    # === 工作流源 ===
+    source: str = Field(
+        "runninghub",
+        description="云端/本地模式配置: 'runninghub' (云端接口) 或 'selfhost' (本地部署的 ComfyUI 工作流)"
+    )
+    
+    # === TTS (语音) ===
+    tts_voice: Optional[str] = Field(
+        None,
+        description="TTS 语音音色 ID (例如 'zh-CN-YunjianNeural', 'zh-CN-XiaoxiaoNeural')"
+    )
+    tts_speed: Optional[float] = Field(
+        None,
+        ge=0.5,
+        le=2.0,
+        description="TTS 语速"
+    )
+    tts_inference_mode: str = Field(
+        "comfyui",
+        description="配音合成模式: 'local' (本地 Edge TTS) 或 'comfyui' (声音克隆) [推荐 comfyui]"
+    )
+    tts_workflow: Optional[str] = Field(
+        None,
+        description="TTS 工作流 JSON 路径 (仅在 inference_mode 为 comfyui 时有效)"
+    )
+    ref_audio: Optional[str] = Field(
+        None,
+        description="用于声音克隆的参考音频路径（可选）"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "summary": "自定义模式 - 纯文本口播",
+                    "value": {
+                        "character_assets": ["/path/to/character.jpg"],
+                        "mode": "customize",
+                        "goods_text": "大家好，今天给大家推荐一款超好用的智能保温杯...",
+                        "source": "runninghub",
+                        "tts_voice": "zh-CN-YunjianNeural",
+                        "tts_speed": 1.2
+                    }
+                },
+                {
+                    "summary": "数字人带货模式 - 商品图 + AI自动生成画外音",
+                    "value": {
+                        "character_assets": ["/path/to/character.jpg"],
+                        "mode": "digital",
+                        "goods_assets": ["/path/to/goods.jpg"],
+                        "goods_title": "智能保温杯",
+                        "goods_text": "",
+                        "source": "runninghub",
+                        "tts_voice": "zh-CN-YunjianNeural",
+                        "tts_speed": 1.2
+                    }
+                }
+            ]
+        }
+
+
+class DigitalHumanVideoResponse(BaseModel):
+    """同步生成的返回结果"""
+    success: bool = True
+    message: str = "成功"
+    video_url: str = Field(..., description="生成的视频播放/下载地址")
+    duration: float = Field(0.0, description="视频实际时长（秒）")
+    file_size: int = Field(..., description="视频文件大小（字节）")
+
+
+class DigitalHumanVideoAsyncResponse(BaseModel):
+    """异步生成的返回结果"""
+    success: bool = True
+    message: str = "任务已成功创建"
+    task_id: str = Field(..., description="可以传入 /api/tasks/{task_id} 接口来查询进度的任务 ID")
