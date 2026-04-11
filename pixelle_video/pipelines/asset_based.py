@@ -338,8 +338,9 @@ class AssetBasedPipeline(LinearVideoPipeline):
             title=title
         )
         
-        # Call LLM with structured output
-        script: VideoScript = await self.core.llm(
+        # Call LLM with structured output (with optional model override)
+        llm = self._get_llm_for_params(context.params)
+        script: VideoScript = await llm(
             prompt=prompt,
             response_type=VideoScript,
             temperature=0.8,

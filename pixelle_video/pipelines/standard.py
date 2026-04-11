@@ -113,8 +113,9 @@ class StandardPipeline(LinearVideoPipeline):
         
         if mode == "generate":
             self._report_progress(ctx.progress_callback, "generating_narrations", 0.05)
+            llm = self._get_llm_for_params(ctx.params)
             ctx.narrations = await generate_narrations_from_topic(
-                self.llm,
+                llm,
                 topic=text,
                 n_scenes=n_scenes,
                 min_words=min_words,
@@ -144,11 +145,12 @@ class StandardPipeline(LinearVideoPipeline):
             logger.info(f"   Title: '{title}' (user-specified)")
         else:
             self._report_progress(ctx.progress_callback, "generating_title", 0.01)
+            llm = self._get_llm_for_params(ctx.params)
             if mode == "generate":
-                ctx.title = await generate_title(self.llm, text, strategy="auto")
+                ctx.title = await generate_title(llm, text, strategy="auto")
                 logger.info(f"   Title: '{ctx.title}' (auto-generated)")
             else:  # fixed
-                ctx.title = await generate_title(self.llm, text, strategy="llm")
+                ctx.title = await generate_title(llm, text, strategy="llm")
                 logger.info(f"   Title: '{ctx.title}' (LLM-generated)")
 
     async def plan_visuals(self, ctx: PipelineContext):
@@ -197,8 +199,9 @@ class StandardPipeline(LinearVideoPipeline):
                     )
                 
                 # Generate base image prompts
+                llm = self._get_llm_for_params(ctx.params)
                 base_image_prompts = await generate_image_prompts(
-                    self.llm,
+                    llm,
                     narrations=ctx.narrations,
                     min_words=min_words,
                     max_words=max_words,

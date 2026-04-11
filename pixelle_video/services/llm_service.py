@@ -289,12 +289,18 @@ You MUST respond with ONLY a valid JSON object (no markdown, no extra text)."""
         Returns:
             Parsed model instance
         """
+        logger.debug(f"Parsing LLM response as {response_type.__name__}, raw content ({len(content)} chars):\n{content}")
+        
         # Try direct JSON parsing first
         try:
             data = json.loads(content)
-            return response_type.model_validate(data)
-        except json.JSONDecodeError:
-            pass
+            result = response_type.model_validate(data)
+            logger.debug(f"✅ Direct JSON parse succeeded")
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug(f"Direct JSON parse failed: {e}")
+        except Exception as e:
+            logger.debug(f"Direct JSON validation failed: {e}")
         
         # Try extracting from markdown code block
         json_pattern = r'```(?:json)?\s*([\s\S]+?)\s*```'
@@ -302,9 +308,15 @@ You MUST respond with ONLY a valid JSON object (no markdown, no extra text)."""
         if match:
             try:
                 data = json.loads(match.group(1))
-                return response_type.model_validate(data)
-            except json.JSONDecodeError:
-                pass
+                result = response_type.model_validate(data)
+                logger.debug(f"✅ Markdown code block parse succeeded")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"Markdown code block JSON parse failed: {e}")
+            except Exception as e:
+                logger.debug(f"Markdown code block validation failed: {e}")
+        else:
+            logger.debug("No markdown code block found")
         
         # Try to find any JSON object in the text
         brace_start = content.find('{')
@@ -312,12 +324,26 @@ You MUST respond with ONLY a valid JSON object (no markdown, no extra text)."""
         if brace_start != -1 and brace_end > brace_start:
             try:
                 json_str = content[brace_start:brace_end + 1]
+                logger.debug(f"Trying brace extraction: {json_str[:300]}...")
                 data = json.loads(json_str)
-                return response_type.model_validate(data)
-            except json.JSONDecodeError:
-                pass
+                result = response_type.model_validate(data)
+                logger.debug(f"✅ Brace extraction parse succeeded")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"Brace extraction JSON parse failed: {e}")
+            except Exception as e:
+                logger.debug(f"Brace extraction validation failed: {e}")
+        else:
+            logger.debug("No JSON braces found in response")
         
-        raise ValueError(f"Failed to parse LLM response as {response_type.__name__}: {content[:200]}...")
+        # All attempts failed
+        error_msg = (
+            f"Failed to parse LLM response as {response_type.__name__}.\n"
+            f"Response length: {len(content)} chars.\n"
+            f"Response content:\n{content[:1000]}"
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
     
     @property
     def active(self) -> str:

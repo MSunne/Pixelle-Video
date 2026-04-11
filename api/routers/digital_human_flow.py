@@ -70,6 +70,7 @@ async def step3_generate_video(
         from api.schemas.digital_human import DigitalHumanVideoRequest
         standard_req = DigitalHumanVideoRequest(
             character_assets=[request_body.character_asset_path],
+            llm_model=request_body.llm_model,
             mode=request_body.mode,
             goods_assets=[request_body.goods_asset_path] if request_body.goods_asset_path else None,
             goods_title=request_body.goods_title,

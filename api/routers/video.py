@@ -139,6 +139,10 @@ async def generate_video_sync(
             "bgm_volume": request_body.bgm_volume,
         }
         
+        # Add LLM model override if specified
+        if request_body.llm_model:
+            video_params["llm_model"] = request_body.llm_model
+        
         # Add TTS workflow if specified
         if request_body.tts_workflow:
             video_params["tts_workflow"] = request_body.tts_workflow
@@ -249,6 +253,10 @@ async def generate_video_async(
                 # Progress callback can be added here if needed
                 # "progress_callback": lambda event: task_manager.update_progress(...)
             }
+            
+            # Add LLM model override if specified
+            if request_body.llm_model:
+                video_params["llm_model"] = request_body.llm_model
             
             # Add TTS workflow if specified
             if request_body.tts_workflow:

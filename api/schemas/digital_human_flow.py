@@ -10,6 +10,13 @@ class Step3GenerateRequest(BaseModel):
     # 核心模块对应
     character_asset_path: str = Field(..., description="人物形象图片路径（对应前端的：人物形象上传）")
     
+    # LLM 模型选择
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
+    
     source: Literal["runninghub", "selfhost"] = Field("runninghub", description="服务配置（对应前端的：服务配置），代表是使用云端还是本地 ComfyUI 执行流")
     
     mode: Literal["digital", "customize"] = Field(

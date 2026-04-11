@@ -16,6 +16,7 @@ Content generation endpoints
 Endpoints for generating narrations, image prompts, and titles.
 """
 
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 
@@ -35,6 +36,26 @@ from pixelle_video.utils.content_generators import (
 )
 
 router = APIRouter(prefix="/content", tags=["Content Generation"])
+
+
+def _wrap_llm_with_model(llm_service, llm_model: Optional[str]):
+    """
+    Create a LLM callable wrapper that injects a model override.
+    
+    If llm_model is None, returns the original service (no overhead).
+    """
+    if not llm_model:
+        return llm_service
+    
+    async def wrapped_llm(*args, **kwargs):
+        # Only inject model if caller didn't explicitly set it
+        if "model" not in kwargs:
+            kwargs["model"] = llm_model
+        return await llm_service(*args, **kwargs)
+    
+    # Preserve the 'active' property for introspection
+    wrapped_llm.active = llm_model
+    return wrapped_llm
 
 
 @router.post("/narration", response_model=NarrationGenerateResponse)
@@ -57,9 +78,12 @@ async def generate_narration(
     try:
         logger.info(f"Generating {request.n_scenes} narrations from text")
         
+        # Wrap LLM service with model override
+        llm = _wrap_llm_with_model(pixelle_video.llm, request.llm_model)
+        
         # Call narration generator utility function
         narrations = await generate_narrations_from_topic(
-            llm_service=pixelle_video.llm,
+            llm_service=llm,
             topic=request.text,
             n_scenes=request.n_scenes,
             min_words=request.min_words,
@@ -94,9 +118,12 @@ async def generate_image_prompt(
     try:
         logger.info(f"Generating image prompts for {len(request.narrations)} narrations")
         
+        # Wrap LLM service with model override
+        llm = _wrap_llm_with_model(pixelle_video.llm, request.llm_model)
+        
         # Call image prompt generator utility function
         image_prompts = await generate_image_prompts(
-            llm_service=pixelle_video.llm,
+            llm_service=llm,
             narrations=request.narrations,
             min_words=request.min_words,
             max_words=request.max_words
@@ -129,9 +156,12 @@ async def generate_title_endpoint(
     try:
         logger.info("Generating title from text")
         
+        # Wrap LLM service with model override
+        llm = _wrap_llm_with_model(pixelle_video.llm, request.llm_model)
+        
         # Call title generator utility function
         title = await generate_title(
-            llm_service=pixelle_video.llm,
+            llm_service=llm,
             content=request.text,
             strategy="llm"
         )
@@ -143,4 +173,5 @@ async def generate_title_endpoint(
     except Exception as e:
         logger.error(f"Title generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 

@@ -69,6 +69,34 @@ class BasePipeline(ABC):
         # Backward compatibility alias
         self.image = pixelle_video_core.media
     
+    def _get_llm_for_params(self, params: dict = None):
+        """
+        Get LLM callable, optionally wrapped with a per-request model override.
+        
+        If params contains 'llm_model', wraps self.llm to inject that model
+        into every LLM call. Otherwise returns self.llm directly.
+        
+        Args:
+            params: Pipeline parameters dict (may contain 'llm_model')
+        
+        Returns:
+            LLM callable (original or wrapped)
+        """
+        llm_model = (params or {}).get("llm_model")
+        if not llm_model:
+            return self.llm
+        
+        original_llm = self.llm
+        
+        async def wrapped_llm(*args, **kwargs):
+            if "model" not in kwargs:
+                kwargs["model"] = llm_model
+            return await original_llm(*args, **kwargs)
+        
+        # Preserve the 'active' property for introspection
+        wrapped_llm.active = llm_model
+        return wrapped_llm
+    
     @abstractmethod
     async def __call__(
         self,

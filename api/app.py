@@ -119,7 +119,10 @@ if api_config.cors_enabled:
     )
     logger.info(f"CORS enabled for origins: {api_config.cors_origins}")
 
+# ==============================================================================
 # Include routers
+# ==============================================================================
+
 # Health check (no prefix)
 app.include_router(health_router)
 
@@ -139,7 +142,7 @@ app.include_router(frame_router, prefix=api_config.api_prefix)
 async def root():
     """Root endpoint with API information"""
     return {
-        "service": "数字人口播 API",
+        "service": "Pixelle-Video 生产 API",
         "version": "1.0.0",
         "docs": api_config.docs_url,
         "health": "/health",
@@ -165,6 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    parser.add_argument("--log-level", default="debug", help="Log level (debug/info/warning/error)")
     
     args = parser.parse_args()
     
@@ -187,7 +191,9 @@ Press Ctrl+C to stop the server
         host=args.host,
         port=args.port,
         reload=args.reload,
+        log_level=args.log_level,
         proxy_headers=True,
         forwarded_allow_ips="*",
     )
+
 

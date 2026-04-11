@@ -16,6 +16,13 @@ class DigitalHumanVideoRequest(BaseModel):
         min_length=1
     )
     
+    # === LLM 模型选择 ===
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
+    
     # === 模式 ===
     mode: Literal["digital", "customize"] = Field(
         "customize",

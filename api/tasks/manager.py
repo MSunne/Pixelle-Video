@@ -140,10 +140,12 @@ class TaskManager:
                 logger.info(f"Task {task_id} completed")
                 
             except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
                 task.status = TaskStatus.FAILED
-                task.error = str(e)
+                task.error = f"{type(e).__name__}: {e}\n\n{tb}"
                 task.completed_at = datetime.now()
-                logger.error(f"Task {task_id} failed: {e}")
+                logger.error(f"Task {task_id} failed: {e}\n{tb}")
         
         # Start execution
         future = asyncio.create_task(_execute())

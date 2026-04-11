@@ -15,7 +15,7 @@ API Schemas (Pydantic models)
 """
 
 from api.schemas.base import BaseResponse, ErrorResponse
-from api.schemas.llm import LLMChatRequest, LLMChatResponse
+from api.schemas.llm import LLMChatRequest, LLMChatResponse, LLMModelInfo, LLMModelListResponse
 from api.schemas.tts import TTSSynthesizeRequest, TTSSynthesizeResponse
 from api.schemas.image import ImageGenerateRequest, ImageGenerateResponse
 from api.schemas.content import (
@@ -39,6 +39,8 @@ __all__ = [
     # LLM
     "LLMChatRequest",
     "LLMChatResponse",
+    "LLMModelInfo",
+    "LLMModelListResponse",
     # TTS
     "TTSSynthesizeRequest",
     "TTSSynthesizeResponse",

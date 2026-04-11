@@ -24,6 +24,13 @@ class VideoGenerateRequest(BaseModel):
     # === Input ===
     text: str = Field(..., description="Source text for video generation")
     
+    # === LLM Model Override ===
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
+    
     # === Processing Mode ===
     mode: Literal["generate", "fixed"] = Field(
         "generate",

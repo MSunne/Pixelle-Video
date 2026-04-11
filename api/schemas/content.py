@@ -25,6 +25,11 @@ from pydantic import BaseModel, Field
 class NarrationGenerateRequest(BaseModel):
     """Narration generation request"""
     text: str = Field(..., description="Source text to generate narrations from")
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
     n_scenes: int = Field(5, ge=1, le=20, description="Number of scenes")
     min_words: int = Field(5, ge=1, le=100, description="Minimum words per narration")
     max_words: int = Field(20, ge=1, le=200, description="Maximum words per narration")
@@ -54,6 +59,11 @@ class NarrationGenerateResponse(BaseModel):
 class ImagePromptGenerateRequest(BaseModel):
     """Image prompt generation request"""
     narrations: List[str] = Field(..., description="List of narrations")
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
     min_words: int = Field(30, ge=10, le=100, description="Minimum words per prompt")
     max_words: int = Field(60, ge=10, le=200, description="Maximum words per prompt")
     
@@ -84,6 +94,11 @@ class ImagePromptGenerateResponse(BaseModel):
 class TitleGenerateRequest(BaseModel):
     """Title generation request"""
     text: str = Field(..., description="Source text")
+    llm_model: Optional[str] = Field(
+        None,
+        description="指定使用的 LLM 模型名称（可选）。不填则使用系统全局配置的模型。"
+                    "可通过 GET /api/llm/models 获取可用模型列表。"
+    )
     style: Optional[str] = Field(None, description="Title style (e.g., 'engaging', 'formal')")
     
     class Config:

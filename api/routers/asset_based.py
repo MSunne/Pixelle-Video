@@ -105,6 +105,7 @@ async def generate_asset_video_sync(
             bgm_path=request_body.bgm_path,
             bgm_volume=request_body.bgm_volume,
             bgm_mode=request_body.bgm_mode,
+            llm_model=request_body.llm_model,
         )
         
         # Get file info before potential S3 upload (which may delete local file)
@@ -177,6 +178,7 @@ async def generate_asset_video_async(
                 bgm_path=request_body.bgm_path,
                 bgm_volume=request_body.bgm_volume,
                 bgm_mode=request_body.bgm_mode,
+                llm_model=request_body.llm_model,
             )
             
             file_size = os.path.getsize(ctx.final_video_path) if os.path.exists(ctx.final_video_path) else 0
