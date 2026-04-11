@@ -243,7 +243,7 @@ class TaskManager:
                 logger.error(f"Error in cleanup loop: {e}")
     
     def _cleanup_old_tasks(self):
-        """Remove old completed/failed tasks"""
+        """Remove old completed/failed tasks and their local files"""
         cutoff_time = datetime.now() - timedelta(seconds=api_config.task_retention_time)
         
         tasks_to_remove = []
@@ -253,12 +253,45 @@ class TaskManager:
                     tasks_to_remove.append(task_id)
         
         for task_id in tasks_to_remove:
+            # Safety net: clean up local task directory if it still exists
+            self._cleanup_task_files(self._tasks[task_id])
+            
             del self._tasks[task_id]
             if task_id in self._task_futures:
                 del self._task_futures[task_id]
         
         if tasks_to_remove:
             logger.info(f"Cleaned up {len(tasks_to_remove)} old tasks")
+    
+    @staticmethod
+    def _cleanup_task_files(task: Task):
+        """
+        Safety net: remove any leftover local files for a task.
+        
+        Checks both the task result (for video paths) and scans the output
+        directory for matching task directories.
+        """
+        try:
+            from pixelle_video.utils.os_util import cleanup_task_dir, get_output_path
+            from pathlib import Path
+            
+            # Try to find task directory from result video path
+            if task.result and isinstance(task.result, dict):
+                video_url = task.result.get("video_url", "")
+                # If it's a local path (not S3 URL), extract the task dir
+                if video_url and not video_url.startswith("http"):
+                    video_path = Path(video_url)
+                    if video_path.parent.is_dir():
+                        cleanup_task_dir(str(video_path.parent))
+            
+            # Also try request params for task_dir hints
+            if task.request_params:
+                task_dir = task.request_params.get("task_dir")
+                if task_dir:
+                    cleanup_task_dir(str(task_dir))
+                    
+        except Exception as e:
+            logger.debug(f"Task file cleanup skipped for {task.task_id}: {e}")
 
 
 # Global task manager instance

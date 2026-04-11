@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Pixelle-Video API shutdown complete")
 
 
-# Create FastAPI app
+    # Create FastAPI app
 app = FastAPI(
     title="Pixelle-Video API",
     description="""
@@ -139,8 +139,8 @@ app.include_router(frame_router, prefix=api_config.api_prefix)
 async def root():
     """Root endpoint with API information"""
     return {
-        "service": "Pixelle-Video API",
-        "version": "0.1.0",
+        "service": "数字人口播 API",
+        "version": "1.0.0",
         "docs": api_config.docs_url,
         "health": "/health",
         "api": {
@@ -187,5 +187,7 @@ Press Ctrl+C to stop the server
         host=args.host,
         port=args.port,
         reload=args.reload,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 

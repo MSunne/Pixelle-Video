@@ -17,6 +17,7 @@ Supports both synchronous and asynchronous video generation.
 """
 
 import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
@@ -164,6 +165,12 @@ async def generate_video_sync(
         # Convert path to URL
         video_url = path_to_url(request, result.video_path)
         
+        # Clean up local task directory only after successful S3 upload
+        if video_url != local_url:
+            task_dir = str(Path(result.video_path).parent)
+            from pixelle_video.utils.os_util import cleanup_task_dir
+            cleanup_task_dir(task_dir)
+        
         return VideoGenerateResponse(
             video_url=video_url,
             duration=result.duration,
@@ -267,6 +274,12 @@ async def generate_video_async(
             
             # Convert path to URL
             video_url = path_to_url(request, result.video_path)
+            
+            # Clean up local task directory only after successful S3 upload
+            if video_url != local_url:
+                task_dir = str(Path(result.video_path).parent)
+                from pixelle_video.utils.os_util import cleanup_task_dir
+                cleanup_task_dir(task_dir)
             
             return {
                 "video_url": video_url,

@@ -5,41 +5,6 @@ from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 
-# --- Step 1: Upload Assets ---
-class Step1UploadResponse(BaseModel):
-    success: bool = True
-    message: str = "上传成功"
-    file_path: str = Field(..., description="文件的绝对路径，用于传递给后续步骤的参数中（如 character_asset_path, goods_asset_path, ref_audio 等）")
-    file_url: str = Field(..., description="可以通过浏览器直接访问的预览地址")
-
-
-# --- Step 2: TTS Synthesis ---
-class Step2TTSRequest(BaseModel):
-    text: str = Field(..., description="需要合成的口播文案 / Narration text")
-    # ComfyUI Params
-    ref_audio: Optional[str] = Field(None, description="参考音频路径 (对应前端上传的参考音频，基于此文件克隆声音)")
-
-    class Config:
-        json_schema_extra = {
-            "examples": [
-                {
-                    "summary": "合成配音",
-                    "value": {
-                        "text": "家人们，这款老廖牌香薰简直无敌了。",
-                        "ref_audio": "/path/to/uploads/dh_flow/xxx_audio.m4a"
-                    }
-                }
-            ]
-        }
-
-class Step2TTSResponse(BaseModel):
-    success: bool = True
-    message: str = "配音合成成功"
-    audio_path: str = Field(..., description="合成的音频本地路径")
-    audio_url: str = Field(..., description="可以直接试听预览的音频地址")
-    duration: float = Field(..., description="音频时长（秒）")
-
-
 # --- Step 3: Generation ---
 class Step3GenerateRequest(BaseModel):
     # 核心模块对应

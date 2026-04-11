@@ -113,6 +113,12 @@ async def generate_digital_human_sync(
         local_url = path_to_url(request, result.video_path)
         video_url = _upload_to_s3_if_available(result.video_path, local_url)
         
+        # Clean up local task directory only after successful S3 upload
+        # (if video_url == local_url, S3 was not available — keep local files)
+        if video_url != local_url and result.task_dir:
+            from pixelle_video.utils.os_util import cleanup_task_dir
+            cleanup_task_dir(result.task_dir)
+        
         return DigitalHumanVideoResponse(
             video_url=video_url,
             duration=result.duration,
@@ -190,6 +196,11 @@ async def generate_digital_human_async(
             file_size = result.file_size
             local_url = path_to_url(request, result.video_path)
             video_url = _upload_to_s3_if_available(result.video_path, local_url)
+            
+            # Clean up local task directory only after successful S3 upload
+            if video_url != local_url and result.task_dir:
+                from pixelle_video.utils.os_util import cleanup_task_dir
+                cleanup_task_dir(result.task_dir)
             
             return {
                 "video_url": video_url,

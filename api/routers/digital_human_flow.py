@@ -7,14 +7,11 @@ import os
 from pathlib import Path
 import uuid
 import shutil
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
 from api.dependencies import PixelleVideoDep
 from api.schemas.digital_human_flow import (
-    Step1UploadResponse,
-    Step2TTSRequest,
-    Step2TTSResponse,
     Step3GenerateRequest,
     Step3GenerateResponse,
 )
@@ -56,86 +53,8 @@ def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
     return fallback_url
 
 
-@router.post("/step1-upload", response_model=Step1UploadResponse, tags=["Step 1"], summary="第一步：上传人物或商品形象图片")
-async def step1_upload_asset(
-    file: UploadFile = File(..., description="要上传的图片或音频文件"),
-    request: Request = None
-):
-    """
-    上传数字人形象图片或商品图片素材。
-    
-    返回文件的服务器路径（传给后续接口使用）以及可以点击预览的 URL。
-    """
-    try:
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="Empty filename")
-            
-        ext = Path(file.filename).suffix.lower()
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".mp3", ".wav", ".m4a"]:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
-            
-        # Ensure output directory exists
-        upload_dir = Path("output/uploads/dh_flow")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Unique file name to prevent collision
-        unique_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
-        final_path = upload_dir / unique_name
-        
-        # Save file to disk
-        with open(final_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        # Build URL
-        file_url = _path_to_url(request, str(final_path))
-        
-        return Step1UploadResponse(
-            file_path=str(final_path.absolute()),
-            file_url=file_url
-        )
-    except Exception as e:
-        logger.error(f"[Flow Upload] Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/step2-synthesize-tts", response_model=Step2TTSResponse, tags=["Step 2 (可选)"], summary="第二步：合成配音（预览音频）")
-async def step2_synthesize_tts(
-    request_body: Step2TTSRequest,
-    pixelle_video: PixelleVideoDep,
-    request: Request
-):
-    """
-    【可选步骤】根据输入的文案旁白，提前合成配音音频。
-    用户可用此接口提前试听声音效果是否满意，再决定是否进行完整的视频生成。
-    """
-    try:
-        from pixelle_video.utils.tts_util import get_audio_duration
-        
-        tts_kwargs = {
-            "text": request_body.text,
-            "inference_mode": "comfyui",
-            "voice": "zh-CN-YunjianNeural",
-            "speed": 1.2,
-        }
-        
-        if request_body.ref_audio:
-            tts_kwargs["ref_audio"] = request_body.ref_audio
-            
-        audio_path = await pixelle_video.tts(**tts_kwargs)
-        duration = get_audio_duration(audio_path)
-        audio_url = _path_to_url(request, audio_path)
-        
-        return Step2TTSResponse(
-            audio_path=audio_path,
-            audio_url=audio_url,
-            duration=duration
-        )
-    except Exception as e:
-        logger.error(f"[Flow TTS] Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/step3-generate-video", response_model=Step3GenerateResponse, tags=["Step 3"], summary="第三步：开始生成最终数字人口播视频")
+@router.post("/step3-generate-video", response_model=Step3GenerateResponse, tags=["数字人产品口播"], summary="开始生成数字人口播视频")
 async def step3_generate_video(
     request_body: Step3GenerateRequest,
     pixelle_video: PixelleVideoDep
@@ -207,7 +126,14 @@ async def step3_generate_video(
             # Use a dummy request to build URL since we don't have the real request context in background task easily.
             # We'll just build a relative URL and then fix it, or upload to S3 directly.
             # Easiest way is to just assume default host or S3 will handle it.
-            video_url = _upload_to_s3_if_available(result.video_path, f"/api/files/{Path(result.video_path).name}")
+            fallback_url = f"/api/files/{Path(result.video_path).name}"
+            video_url = _upload_to_s3_if_available(result.video_path, fallback_url)
+            
+            # Clean up local task directory only after successful S3 upload
+            # (if video_url == fallback_url, S3 was not available — keep local files)
+            if video_url != fallback_url and result.task_dir:
+                from pixelle_video.utils.os_util import cleanup_task_dir
+                cleanup_task_dir(result.task_dir)
             
             return {
                 "video_url": video_url,
@@ -228,7 +154,7 @@ async def step3_generate_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/step4-check-status/{task_id}", response_model=Task, tags=["Step 4"], summary="第四步：轮询任务执行结果")
+@router.get("/step4-check-status/{task_id}", response_model=Task, tags=["任务进度查询"], summary="轮询任务执行进度与结果")
 async def step4_check_status(task_id: str):
     """
     检查第三步生成的数字人视频进度。

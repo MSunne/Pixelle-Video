@@ -254,6 +254,34 @@ def create_task_output_dir(task_id: Optional[str] = None) -> Tuple[str, str]:
     return task_dir, task_id
 
 
+def cleanup_task_dir(task_dir: str) -> bool:
+    """
+    Remove a task output directory and all its files after artifacts have been uploaded.
+    
+    This should be called after the final video has been uploaded to S3,
+    to prevent unbounded local disk usage on the server.
+    
+    Args:
+        task_dir: Absolute path to the task directory (e.g., output/20251028_143052_ab3d)
+    
+    Returns:
+        True if cleanup succeeded, False otherwise
+    """
+    import shutil
+    from loguru import logger
+
+    if not task_dir or not os.path.isdir(task_dir):
+        return False
+
+    try:
+        shutil.rmtree(task_dir)
+        logger.info(f"[Cleanup] Task directory removed: {task_dir}")
+        return True
+    except OSError as e:
+        logger.warning(f"[Cleanup] Failed to remove task directory {task_dir}: {e}")
+        return False
+
+
 def get_task_path(task_id: str, *paths: str) -> str:
     """
     Get path within task directory

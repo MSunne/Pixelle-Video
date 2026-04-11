@@ -115,6 +115,11 @@ async def generate_asset_video_sync(
         local_url = path_to_url(request, ctx.final_video_path)
         video_url = _upload_to_s3_if_available(ctx.final_video_path, local_url)
         
+        # Clean up local task directory only after successful S3 upload
+        if video_url != local_url and hasattr(ctx, 'task_dir') and ctx.task_dir:
+            from pixelle_video.utils.os_util import cleanup_task_dir
+            cleanup_task_dir(str(ctx.task_dir))
+        
         return AssetBasedVideoResponse(
             video_url=video_url,
             duration=duration,
@@ -179,6 +184,11 @@ async def generate_asset_video_async(
             
             local_url = path_to_url(request, ctx.final_video_path)
             video_url = _upload_to_s3_if_available(ctx.final_video_path, local_url)
+            
+            # Clean up local task directory only after successful S3 upload
+            if video_url != local_url and hasattr(ctx, 'task_dir') and ctx.task_dir:
+                from pixelle_video.utils.os_util import cleanup_task_dir
+                cleanup_task_dir(str(ctx.task_dir))
             
             return {
                 "video_url": video_url,
