@@ -80,26 +80,26 @@ async def lifespan(app: FastAPI):
 
     # Create FastAPI app
 app = FastAPI(
-    title="Pixelle-Video API",
+    title="Pixelle-Video 生产 API",
     description="""
-    ## Pixelle-Video - AI Video Generation Platform API
+    ## Pixelle-Video - AI 视频生成平台 API
     
-    ### Features
-    - 🤖 **LLM**: Large language model integration
-    - 🔊 **TTS**: Text-to-speech synthesis
-    - 🎨 **Image**: AI image generation
-    - 📝 **Content**: Automated content generation
-    - 🎬 **Video**: End-to-end video generation
+    ### 功能特性
+    - 🤖 **LLM**: 大语言模型集成体验
+    - 🔊 **TTS**: 文本转语音合成
+    - 🎨 **Image**: AI 图像生成驱动
+    - 📝 **Content**: 自动化文案与内容生成
+    - 🎬 **Video**: 端到端视频合成与生成
     
-    ### Video Generation Modes
-    - **Sync**: `/api/video/generate/sync` - For small videos (< 30s)
-    - **Async**: `/api/video/generate/async` - For large videos with task tracking
+    ### 视频生成模式
+    - **同步模式 (Sync)**: `/api/video/generate/sync` - 适用于短视频 (< 30s)
+    - **异步模式 (Async)**: `/api/video/generate/async` - 适用于长视频（带完整的任务状态跟踪）
     
-    ### Getting Started
-    1. Check health: `GET /health`
-    2. Generate narrations: `POST /api/content/narration`
-    3. Generate video: `POST /api/video/generate/sync` or `/async`
-    4. Track task progress: `GET /api/tasks/{task_id}`
+    ### 快速开始
+    1. 检查服务健康状态: `GET /health`
+    2. 生成旁白: `POST /api/content/narration`
+    3. 生成视频: `POST /api/video/generate/sync` 或 `/async`
+    4. 跟踪任务进度: `GET /api/tasks/{task_id}`
     """,
     version="0.1.0",
     docs_url=api_config.docs_url,

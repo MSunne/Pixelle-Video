@@ -32,7 +32,7 @@ from api.schemas.resources import (
 from pixelle_video.utils.os_util import list_resource_files, get_root_path, get_data_path
 from pixelle_video.utils.template_util import get_all_templates_with_info
 
-router = APIRouter(prefix="/resources", tags=["Resources"])
+router = APIRouter(prefix="/resources", tags=["资源管理"])
 
 
 @router.get("/workflows/tts", response_model=WorkflowListResponse)

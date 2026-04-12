@@ -21,7 +21,7 @@ from api.dependencies import PixelleVideoDep
 from api.schemas.tts import TTSSynthesizeRequest, TTSSynthesizeResponse
 from pixelle_video.utils.tts_util import get_audio_duration
 
-router = APIRouter(prefix="/tts", tags=["Basic Services"])
+router = APIRouter(prefix="/tts", tags=["基础服务"])
 
 
 @router.post("/synthesize", response_model=TTSSynthesizeResponse)

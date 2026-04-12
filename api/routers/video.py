@@ -14,6 +14,7 @@
 Video generation endpoints
 
 Supports both synchronous and asynchronous video generation.
+Results are uploaded to S3 when available, with local cleanup to save disk space.
 """
 
 import os
@@ -29,7 +30,23 @@ from api.schemas.video import (
 )
 from api.tasks import task_manager, TaskType
 
-router = APIRouter(prefix="/video", tags=["Video Generation"])
+router = APIRouter(prefix="/video", tags=["视频生成"])
+
+
+def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
+    """
+    Upload file to S3 if available, return S3 public URL.
+    Falls back to local API URL if S3 is not configured.
+    After successful S3 upload, local file is deleted to save disk space.
+    """
+    try:
+        from pixelle_video.storage import get_s3_storage
+        s3 = get_s3_storage()
+        if s3.is_available() and os.path.exists(local_path):
+            return s3.upload_video(local_path, cleanup_local=True)
+    except Exception as e:
+        logger.warning(f"[Video] S3 upload failed, using local URL: {e}")
+    return fallback_url
 
 
 def path_to_url(request: Request, file_path: str) -> str:
@@ -163,11 +180,12 @@ async def generate_video_sync(
         # Call video generator service
         result = await pixelle_video.generate_video(**video_params)
         
-        # Get file size
+        # Get file size before potential S3 upload (which may delete local file)
         file_size = os.path.getsize(result.video_path) if os.path.exists(result.video_path) else 0
         
-        # Convert path to URL
-        video_url = path_to_url(request, result.video_path)
+        # Upload to S3 or use local URL
+        local_url = path_to_url(request, result.video_path)
+        video_url = _upload_to_s3_if_available(result.video_path, local_url)
         
         # Clean up local task directory only after successful S3 upload
         if video_url != local_url:
@@ -277,11 +295,12 @@ async def generate_video_async(
             
             result = await pixelle_video.generate_video(**video_params)
             
-            # Get file size
+            # Get file size before potential S3 upload (which may delete local file)
             file_size = os.path.getsize(result.video_path) if os.path.exists(result.video_path) else 0
             
-            # Convert path to URL
-            video_url = path_to_url(request, result.video_path)
+            # Upload to S3 or use local URL
+            local_url = path_to_url(request, result.video_path)
+            video_url = _upload_to_s3_if_available(result.video_path, local_url)
             
             # Clean up local task directory only after successful S3 upload
             if video_url != local_url:

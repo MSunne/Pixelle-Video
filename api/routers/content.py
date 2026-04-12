@@ -35,7 +35,7 @@ from pixelle_video.utils.content_generators import (
     generate_title,
 )
 
-router = APIRouter(prefix="/content", tags=["Content Generation"])
+router = APIRouter(prefix="/content", tags=["内容生成"])
 
 
 def _wrap_llm_with_model(llm_service, llm_model: Optional[str]):

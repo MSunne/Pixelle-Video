@@ -22,7 +22,7 @@ from loguru import logger
 
 from api.tasks import task_manager, Task, TaskStatus
 
-router = APIRouter(prefix="/tasks", tags=["Tasks"])
+router = APIRouter(prefix="/tasks", tags=["任务管理"])
 
 
 @router.get("", response_model=List[Task])

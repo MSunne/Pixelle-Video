@@ -22,10 +22,10 @@ from api.schemas.frame import FrameRenderRequest, FrameRenderResponse, TemplateP
 from pixelle_video.services.frame_html import HTMLFrameGenerator
 from pixelle_video.utils.template_util import parse_template_size, resolve_template_path
 
-router = APIRouter(prefix="/frame", tags=["Frame Rendering"])
+router = APIRouter(prefix="/frame", tags=["帧渲染"])
 
 
-@router.post("/render", response_model=FrameRenderResponse)
+@router.post("/render", response_model=FrameRenderResponse, include_in_schema=False)
 async def render_frame(
     request: FrameRenderRequest,
     pixelle_video: PixelleVideoDep
@@ -83,7 +83,7 @@ async def render_frame(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/template/params", response_model=TemplateParamsResponse)
+@router.get("/template/params", response_model=TemplateParamsResponse, include_in_schema=False)
 async def get_template_params(
     template: str
 ):

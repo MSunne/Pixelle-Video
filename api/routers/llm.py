@@ -25,7 +25,7 @@ from api.schemas.llm import (
     LLMModelListResponse,
 )
 
-router = APIRouter(prefix="/llm", tags=["Basic Services"])
+router = APIRouter(prefix="/llm", tags=["基础服务"])
 
 
 @router.get("/models", response_model=LLMModelListResponse)

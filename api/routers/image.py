@@ -20,7 +20,7 @@ from loguru import logger
 from api.dependencies import PixelleVideoDep
 from api.schemas.image import ImageGenerateRequest, ImageGenerateResponse
 
-router = APIRouter(prefix="/image", tags=["Basic Services"])
+router = APIRouter(prefix="/image", tags=["基础服务"])
 
 
 @router.post("/generate", response_model=ImageGenerateResponse)

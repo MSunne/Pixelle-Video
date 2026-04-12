@@ -270,30 +270,41 @@ class TaskManager:
         """
         Safety net: remove any leftover local files for a task.
         
-        Checks both the task result (for video paths) and scans the output
-        directory for matching task directories.
+        Scans the output directory for matching task directories based on
+        the video URL path segments or request parameters.
         """
         try:
             from pixelle_video.utils.os_util import cleanup_task_dir, get_output_path
             from pathlib import Path
             
-            # Try to find task directory from result video path
+            cleaned = False
+            
+            # Strategy 1: Extract task directory name from video_url path
+            # Works for both local URLs (http://host/api/files/20260411_143427_e5c4/final.mp4)
+            # and relative paths (/api/files/20260411_143427_e5c4/final.mp4)
             if task.result and isinstance(task.result, dict):
                 video_url = task.result.get("video_url", "")
-                # If it's a local path (not S3 URL), extract the task dir
-                if video_url and not video_url.startswith("http"):
-                    video_path = Path(video_url)
-                    if video_path.parent.is_dir():
-                        cleanup_task_dir(str(video_path.parent))
+                if video_url:
+                    # Extract path segments to find task directory name
+                    # Pattern: .../api/files/{task_id}/final.mp4 or .../output/{task_id}/final.mp4
+                    import re
+                    match = re.search(r'(\d{8}_\d{6}_[a-f0-9]{4})', video_url)
+                    if match:
+                        task_dir_name = match.group(1)
+                        task_dir_path = Path(get_output_path(task_dir_name))
+                        if task_dir_path.is_dir():
+                            cleanup_task_dir(str(task_dir_path))
+                            cleaned = True
             
-            # Also try request params for task_dir hints
-            if task.request_params:
+            # Strategy 2: Check request params for task_dir hints
+            if not cleaned and task.request_params:
                 task_dir = task.request_params.get("task_dir")
                 if task_dir:
                     cleanup_task_dir(str(task_dir))
                     
         except Exception as e:
             logger.debug(f"Task file cleanup skipped for {task.task_id}: {e}")
+
 
 
 # Global task manager instance
