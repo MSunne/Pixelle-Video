@@ -132,6 +132,7 @@ class DigitalHumanPipeline:
                     tts_inference_mode=tts_inference_mode,
                     tts_workflow=tts_workflow,
                     ref_audio=ref_audio,
+                    source=source,
                 )
             else:
                 video_path = await self._execute_digital(
@@ -147,6 +148,7 @@ class DigitalHumanPipeline:
                     tts_inference_mode=tts_inference_mode,
                     tts_workflow=tts_workflow,
                     ref_audio=ref_audio,
+                    source=source,
                 )
             
             # Get file info
@@ -188,6 +190,7 @@ class DigitalHumanPipeline:
         tts_inference_mode: str,
         tts_workflow: Optional[str],
         ref_audio: Optional[str],
+        source: str = "runninghub",
     ):
         """Generate TTS audio."""
         tts_kwargs = {
@@ -201,6 +204,11 @@ class DigitalHumanPipeline:
         elif tts_inference_mode == "comfyui":
             if tts_workflow:
                 tts_kwargs["workflow"] = tts_workflow
+            elif ref_audio:
+                # When ref_audio is provided, auto-select Index TTS (voice cloning)
+                # This matches the 8501 Streamlit UI behavior
+                tts_kwargs["workflow"] = f"{source}/tts_index2.json"
+                logger.info(f"[DigitalHuman] Auto-selected Index TTS for voice cloning: {source}/tts_index2.json")
             if ref_audio:
                 tts_kwargs["ref_audio"] = ref_audio
         
@@ -266,6 +274,7 @@ class DigitalHumanPipeline:
         tts_inference_mode: str,
         tts_workflow: Optional[str],
         ref_audio: Optional[str],
+        source: str = "runninghub",
     ) -> str:
         """
         Execute 'customize' mode: character image + custom text → video.
@@ -286,6 +295,7 @@ class DigitalHumanPipeline:
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow,
             ref_audio=ref_audio,
+            source=source,
         )
         
         self._emit_progress({"step": "video_synthesis", "progress": 0.65})
@@ -320,6 +330,7 @@ class DigitalHumanPipeline:
         tts_inference_mode: str,
         tts_workflow: Optional[str],
         ref_audio: Optional[str],
+        source: str = "runninghub",
     ) -> str:
         """
         Execute 'digital' mode: character + goods → video.
@@ -352,6 +363,7 @@ class DigitalHumanPipeline:
                 tts_inference_mode=tts_inference_mode,
                 tts_workflow=tts_workflow,
                 ref_audio=ref_audio,
+                source=source,
             )
         else:
             # Path B: AI-generated text
@@ -367,12 +379,13 @@ class DigitalHumanPipeline:
                 tts_inference_mode=tts_inference_mode,
                 tts_workflow=tts_workflow,
                 ref_audio=ref_audio,
+                source=source,
             )
     
     async def _execute_digital_with_text(
         self, kit, task_dir, character_image, goods_image, text,
         workflow_paths, tts_voice, tts_speed, tts_inference_mode,
-        tts_workflow, ref_audio,
+        tts_workflow, ref_audio, source="runninghub",
     ) -> str:
         """Digital mode Path A: user provides text."""
         self._emit_progress({"step": "combine_image", "progress": 0.10})
@@ -397,6 +410,7 @@ class DigitalHumanPipeline:
             tts_voice=tts_voice, tts_speed=tts_speed,
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow, ref_audio=ref_audio,
+            source=source,
         )
         
         self._emit_progress({"step": "video_synthesis", "progress": 0.65})
@@ -419,7 +433,7 @@ class DigitalHumanPipeline:
     async def _execute_digital_auto(
         self, kit, task_dir, character_image, goods_image, goods_title,
         workflow_paths, tts_voice, tts_speed, tts_inference_mode,
-        tts_workflow, ref_audio,
+        tts_workflow, ref_audio, source="runninghub",
     ) -> str:
         """Digital mode Path B: AI generates text."""
         self._emit_progress({"step": "synthesis", "progress": 0.10})
@@ -445,6 +459,7 @@ class DigitalHumanPipeline:
             tts_voice=tts_voice, tts_speed=tts_speed,
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow, ref_audio=ref_audio,
+            source=source,
         )
         
         self._emit_progress({"step": "video_synthesis", "progress": 0.65})

@@ -54,14 +54,19 @@ def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
 
 
 
-@router.post("/step3-generate-video", response_model=Step3GenerateResponse, tags=["数字人产品口播"], summary="开始生成数字人口播视频")
+@router.post("/step3-generate-video", response_model=Step3GenerateResponse, tags=["数字人视频"], summary="开始生成数字人视频（口播/带货）")
 async def step3_generate_video(
     request_body: Step3GenerateRequest,
     pixelle_video: PixelleVideoDep
 ):
     """
-    提交所有信息（形象图片、商品图片、文本以及TTS参数），异步开始生成最终视频。
-    如果提供了 pre_generated_audio_path，可以跳过配音合成步骤。
+    提交所有信息，异步开始生成数字人视频。
+    
+    **支持模式：**
+    - `customize` (口播模式): 人物图片 + 自定义文案 → 数字人朗读口播视频
+    - `digital` (带货模式): 人物图片 + 商品图片 + 商品标题 → AI 自动生成带货视频
+    
+    如果提供了 ref_audio，系统会自动克隆声音。
     
     返回 task_id，用于在 Step 4 轮询状态。
     """
@@ -155,7 +160,7 @@ async def step3_generate_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/step4-check-status/{task_id}", response_model=Task, tags=["任务进度查询"], summary="轮询任务执行进度与结果")
+@router.get("/step4-check-status/{task_id}", response_model=Task, tags=["数字人视频"], summary="轮询任务执行进度与结果")
 async def step4_check_status(task_id: str):
     """
     检查第三步生成的数字人视频进度。

@@ -33,21 +33,21 @@ class TTSLocalConfig(BaseModel):
 
 
 class TTSComfyUIConfig(BaseModel):
-    """ComfyUI TTS configuration"""
+    """ComfyUI TTS configuration (legacy, kept for backward compatibility)"""
     default_workflow: Optional[str] = Field(default=None, description="Default TTS workflow (optional)")
 
 
 class TTSSubConfig(BaseModel):
     """TTS-specific configuration (under comfyui.tts)"""
     inference_mode: str = Field(default="local", description="TTS inference mode: 'local' or 'comfyui'")
+    default_workflow: Optional[str] = Field(default=None, description="Default TTS workflow (e.g., 'runninghub/tts_edge.json')")
     local: TTSLocalConfig = Field(default_factory=TTSLocalConfig, description="Local TTS (Edge TTS) configuration")
-    comfyui: TTSComfyUIConfig = Field(default_factory=TTSComfyUIConfig, description="ComfyUI TTS configuration")
+    comfyui: TTSComfyUIConfig = Field(default_factory=TTSComfyUIConfig, description="ComfyUI TTS configuration (legacy)")
     
-    # Backward compatibility: keep default_workflow at top level
-    @property
-    def default_workflow(self) -> Optional[str]:
-        """Get default workflow (for backward compatibility)"""
-        return self.comfyui.default_workflow
+    def model_post_init(self, __context):
+        """After init: merge legacy comfyui.default_workflow into top-level if not set"""
+        if not self.default_workflow and self.comfyui and self.comfyui.default_workflow:
+            self.default_workflow = self.comfyui.default_workflow
 
 
 class ImageSubConfig(BaseModel):

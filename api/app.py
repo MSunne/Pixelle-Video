@@ -54,6 +54,8 @@ from api.routers import (
     files_router,
     resources_router,
     frame_router,
+    digital_human_router,
+    digital_human_flow_router,
 )
 
 
@@ -90,10 +92,17 @@ app = FastAPI(
     - 🎨 **Image**: AI 图像生成驱动
     - 📝 **Content**: 自动化文案与内容生成
     - 🎬 **Video**: 端到端视频合成与生成
+    - 🧑 **数字人视频**: 口播模式（朗读文案） / 带货模式（商品图→AI带货视频）
     
-    ### 视频生成模式
-    - **同步模式 (Sync)**: `/api/video/generate/sync` - 适用于短视频 (< 30s)
-    - **异步模式 (Async)**: `/api/video/generate/async` - 适用于长视频（带完整的任务状态跟踪）
+    ### 🧑 数字人视频（推荐）
+    最简流程，三步完成：
+    1. 上传素材：`POST /api/files/upload`
+    2. 提交生成：`POST /api/step3-generate-video`
+    3. 轮询进度：`GET /api/step4-check-status/{task_id}`
+    
+    ### 🎬 通用视频生成
+    - **同步模式**: `/api/video/generate/sync` - 适用于短视频 (< 30s)
+    - **异步模式**: `/api/video/generate/async` - 适用于长视频
     
     ### 快速开始
     1. 检查服务健康状态: `GET /health`
@@ -132,6 +141,8 @@ app.include_router(tts_router, prefix=api_config.api_prefix)
 app.include_router(image_router, prefix=api_config.api_prefix)
 app.include_router(content_router, prefix=api_config.api_prefix)
 app.include_router(video_router, prefix=api_config.api_prefix)
+app.include_router(digital_human_router, prefix=api_config.api_prefix)
+app.include_router(digital_human_flow_router, prefix=api_config.api_prefix)
 app.include_router(tasks_router, prefix=api_config.api_prefix)
 app.include_router(files_router, prefix=api_config.api_prefix)
 app.include_router(resources_router, prefix=api_config.api_prefix)
@@ -147,6 +158,8 @@ async def root():
         "docs": api_config.docs_url,
         "health": "/health",
         "api": {
+            "digital_human": f"{api_config.api_prefix}/digital-human",
+            "digital_human_flow": f"{api_config.api_prefix}/step3-generate-video",
             "llm": f"{api_config.api_prefix}/llm",
             "tts": f"{api_config.api_prefix}/tts",
             "image": f"{api_config.api_prefix}/image",

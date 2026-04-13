@@ -21,9 +21,22 @@ from pathlib import Path
 from loguru import logger
 
 
+import threading
+import concurrent.futures
+
+# Start a background event loop for Streamlit so that all async calls 
+# share the same loop. This prevents 'attached to a different loop'
+# errors when global singletons (like ComfyKit's HTTP clients) bind
+# to the current loop.
+_shared_loop = asyncio.new_event_loop()
+_loop_thread = threading.Thread(target=_shared_loop.run_forever, daemon=True, name="AsyncRunner")
+_loop_thread.start()
+
+
 def run_async(coro):
-    """Run async coroutine in sync context"""
-    return asyncio.run(coro)
+    """Run async coroutine in the shared background event loop context"""
+    future = asyncio.run_coroutine_threadsafe(coro, _shared_loop)
+    return future.result()
 
 
 def get_project_version():

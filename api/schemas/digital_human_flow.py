@@ -21,9 +21,9 @@ class Step3GenerateRequest(BaseModel):
     
     mode: Literal["digital", "customize"] = Field(
         "digital",
-        description="生成模式选择（对应前端的：选择生成模式）。"
-                    "'digital' = 带货模式 (需要商品图和AI旁白); "
-                    "'customize' = 自定义模式 (仅需固定文案的纯口播)"
+        description="生成模式选择。"
+                    "'digital' = 带货模式 (人物+商品图→AI生成带货视频); "
+                    "'customize' = 口播模式 (人物图片+固定文案→数字人朗读视频)"
     )
     
     # 素材与配置模块对应
@@ -38,7 +38,7 @@ class Step3GenerateRequest(BaseModel):
         json_schema_extra = {
             "examples": [
                 {
-                    "summary": "带货模式 - 包含商品和文案",
+                    "summary": "带货模式 - 人物+商品图片生成带货视频",
                     "value": {
                         "character_asset_path": "/path/to/uploads/dh_flow/avatar.jpg",
                         "source": "runninghub",
@@ -50,7 +50,7 @@ class Step3GenerateRequest(BaseModel):
                     }
                 },
                 {
-                    "summary": "自定义模式 - 仅需人物的口播",
+                    "summary": "口播模式 - 数字人朗读固定文案",
                     "value": {
                         "character_asset_path": "/path/to/uploads/dh_flow/avatar.jpg",
                         "source": "runninghub",

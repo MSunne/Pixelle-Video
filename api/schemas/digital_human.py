@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class DigitalHumanVideoRequest(BaseModel):
-    """数字人口播视频生成请求"""
+    """数字人视频生成请求（支持口播和带货两种模式）"""
     
     # === 人物素材 ===
     character_assets: List[str] = Field(
@@ -27,8 +27,8 @@ class DigitalHumanVideoRequest(BaseModel):
     mode: Literal["digital", "customize"] = Field(
         "customize",
         description="生成模式: "
-                    "'customize' = 人物图片 + 自定义文本 → 纯口播视频; "
-                    "'digital' = 人物图片 + 商品图片 → AI 生成的电商带货视频"
+                    "'customize' = 口播模式：人物图片 + 自定义文案 → 数字人朗读视频; "
+                    "'digital' = 带货模式：人物图片 + 商品图片 → AI 生成带货视频"
     )
     
     # === 商品素材 (用于 digital 模式) ===
@@ -44,8 +44,8 @@ class DigitalHumanVideoRequest(BaseModel):
     # === 旁白文案 ===
     goods_text: str = Field(
         "",
-        description="视频旁白文本。在 'customize' 模式下，这就是数字人完整口播的逐字稿。"
-                    "在 'digital' 模式下，如果提供，则按提供的内容读；"
+        description="视频文案。口播模式下，这是数字人完整的口播逐字稿。"
+                    "带货模式下，如果提供，则按提供的内容读；"
                     "如果为空，AI 会根据商品图片和标题自动生成一段带货话术。"
     )
     
@@ -83,7 +83,7 @@ class DigitalHumanVideoRequest(BaseModel):
         json_schema_extra = {
             "examples": [
                 {
-                    "summary": "自定义模式 - 纯文本口播",
+                    "summary": "口播模式 - 数字人朗读固定文案",
                     "value": {
                         "character_assets": ["/path/to/character.jpg"],
                         "mode": "customize",
@@ -94,7 +94,7 @@ class DigitalHumanVideoRequest(BaseModel):
                     }
                 },
                 {
-                    "summary": "数字人带货模式 - 商品图 + AI自动生成画外音",
+                    "summary": "带货模式 - 商品图 + AI 自动生成带货话术",
                     "value": {
                         "character_assets": ["/path/to/character.jpg"],
                         "mode": "digital",

@@ -21,7 +21,7 @@ from api.schemas.digital_human import (
 from api.tasks import task_manager, TaskType
 
 
-router = APIRouter(prefix="/digital-human", tags=["数字人口播生成"])
+router = APIRouter(prefix="/digital-human", tags=["数字人视频"])
 
 
 def path_to_url(request: Request, file_path: str) -> str:
@@ -70,13 +70,11 @@ async def generate_digital_human_sync(
     request: Request
 ):
     """
-    同步生成数字人口播视频
-    
-    使用人物形象图片和旁白文本，创建数字人口播视频。
+    同步生成数字人视频
     
     **支持模式：**
-    - `customize` (自定义模式): 人物图片 + 自定义文本 → 生成口播视频
-    - `digital` (数字人带货): 人物图片 + 商品图片 → 结合商品信息生成 AI 口播介绍视频
+    - `customize` (口播模式): 人物图片 + 自定义文案 → 数字人朗读口播视频
+    - `digital` (带货模式): 人物图片 + 商品图片 → AI 自动生成带货介绍视频
     
     **注意**：生成可能需要几分钟时间。推荐使用 `/generate/async` 接口来进行长时间运行的异步生成。
     
@@ -140,21 +138,21 @@ async def generate_digital_human_async(
     request: Request
 ):
     """
-    异步生成数字人口播视频
+    异步生成数字人视频
     
-    创建一个后台任务用于数字人口播视频生成。
+    创建一个后台任务用于数字人视频生成。
     立即返回 `task_id`，用于后续跟踪任务进度。
     
     **工作流：**
     1. 通过 `/api/files` 接口上传人物/商品图片等素材
-    2. 传入图片路径和旁白文本等参数调用此接口
+    2. 传入图片路径和文案等参数调用此接口
     3. 在返回结果中获得 `task_id`
     4. 轮询调用 `/api/tasks/{task_id}` 来检查任务状态
-    5. 当状态变为 "completed" 时，从结果中获取视频 URL (如有配置则返回 S3 URL)
+    5. 当状态变为 "completed" 时，从结果中获取视频 URL
     
     **支持模式：**
-    - `customize` (自定义模式): 人物图片 + 自定义文本 → 生成口播视频
-    - `digital` (数字人带货): 人物图片 + 商品图片 → 结合商品信息生成 AI 口播介绍视频
+    - `customize` (口播模式): 人物图片 + 自定义文案 → 数字人朗读口播视频
+    - `digital` (带货模式): 人物图片 + 商品图片 → AI 自动生成带货介绍视频
     """
     try:
         logger.info(f"[DigitalHuman] Async generation: mode={request_body.mode}, "
