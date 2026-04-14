@@ -8,59 +8,25 @@ Supports both synchronous and asynchronous generation.
 Results are uploaded to S3 when available, with local cleanup to save disk space.
 """
 
-import os
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
 from api.dependencies import PixelleVideoDep
 from api.schemas.digital_human import (
+    DigitalHumanVideoAsyncResponse,
     DigitalHumanVideoRequest,
     DigitalHumanVideoResponse,
-    DigitalHumanVideoAsyncResponse,
 )
-from api.tasks import task_manager, TaskType
-
+from api.tasks import TaskType, task_manager
+from api.utils.helpers import (
+    cleanup_after_uploads,
+    upload_outputs_to_s3_or_fallback,
+)
 
 router = APIRouter(prefix="/digital-human", tags=["数字人视频"])
 
 
-def path_to_url(request: Request, file_path: str) -> str:
-    """Convert file path to accessible URL."""
-    from pathlib import Path
 
-    file_path = file_path.replace("\\", "/")
-    is_absolute = os.path.isabs(file_path) or Path(file_path).is_absolute()
-
-    if is_absolute:
-        parts = file_path.split("/")
-        try:
-            output_idx = parts.index("output")
-            relative_parts = parts[output_idx + 1:]
-            file_path = "/".join(relative_parts)
-        except ValueError:
-            file_path = Path(file_path).name
-    else:
-        if file_path.startswith("output/"):
-            file_path = file_path[7:]
-
-    base_url = str(request.base_url).rstrip('/')
-    return f"{base_url}/api/files/{file_path}"
-
-
-def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
-    """
-    Upload file to S3 if available, return S3 public URL.
-    Falls back to local API URL if S3 is not configured.
-    After successful S3 upload, local file is deleted to save disk space.
-    """
-    try:
-        from pixelle_video.storage import get_s3_storage
-        s3 = get_s3_storage()
-        if s3.is_available() and os.path.exists(local_path):
-            return s3.upload_video(local_path, cleanup_local=True)
-    except Exception as e:
-        logger.warning(f"[DigitalHuman] S3 upload failed, using local URL: {e}")
-    return fallback_url
 
 
 @router.post("/generate/sync", response_model=DigitalHumanVideoResponse)
@@ -96,31 +62,35 @@ async def generate_digital_human_sync(
             goods_assets=request_body.goods_assets,
             goods_title=request_body.goods_title,
             goods_text=request_body.goods_text,
+            llm_model=request_body.llm_model,
             source=request_body.source,
             tts_voice=request_body.tts_voice,
             tts_speed=request_body.tts_speed,
             tts_inference_mode=request_body.tts_inference_mode,
             tts_workflow=request_body.tts_workflow,
             ref_audio=request_body.ref_audio,
+            subtitle_enabled=request_body.subtitle_enabled,
+            subtitle_output=request_body.subtitle_output,
+            subtitle_language=request_body.subtitle_language,
         )
         
-        # Get file info before potential S3 upload
         file_size = result.file_size
-        
-        # Upload to S3 or use local URL
-        local_url = path_to_url(request, result.video_path)
-        video_url = _upload_to_s3_if_available(result.video_path, local_url)
-        
-        # Clean up local task directory only after successful S3 upload
-        # (if video_url == local_url, S3 was not available — keep local files)
-        if video_url != local_url and result.task_dir:
-            from pixelle_video.utils.os_util import cleanup_task_dir
-            cleanup_task_dir(result.task_dir)
+        final_urls, local_urls = upload_outputs_to_s3_or_fallback(
+            request,
+            {
+                "video": result.video_path,
+                "subtitle": result.subtitle_path,
+            },
+        )
+        cleanup_after_uploads(final_urls, local_urls, result.task_dir)
         
         return DigitalHumanVideoResponse(
-            video_url=video_url,
+            video_url=final_urls["video"],
             duration=result.duration,
-            file_size=file_size
+            file_size=file_size,
+            subtitle_enabled=result.subtitle_enabled,
+            subtitle_format=result.subtitle_format,
+            subtitle_url=final_urls.get("subtitle"),
         )
         
     except ValueError as e:
@@ -177,33 +147,63 @@ async def generate_digital_human_async(
             
             pipeline = DigitalHumanPipeline(pixelle_video)
             
+            # Progress callback: update task progress for polling clients
+            def on_progress(data: dict):
+                step = data.get("step", "")
+                progress_val = data.get("progress", 0.0)
+                step_messages = {
+                    "combine_image": "正在合成人与商品关键图...",
+                    "synthesis": "正在生成解说文案与关键图...",
+                    "tts": "正在合成语音配音...",
+                    "video_synthesis": "正在合成对口型视频并渲染...",
+                    "subtitle_translation": "正在生成双语字幕...",
+                    "subtitle_alignment": "正在对齐字幕时间轴...",
+                    "subtitle_burn": "正在烧录字幕...",
+                    "completed": "视频生成已完成！"
+                }
+                task_manager.update_progress(
+                    task.task_id,
+                    current=int(progress_val * 100),
+                    total=100,
+                    message=step_messages.get(step, "正在处理中...")
+                )
+            
             result = await pipeline(
                 character_assets=request_body.character_assets,
                 mode=request_body.mode,
                 goods_assets=request_body.goods_assets,
                 goods_title=request_body.goods_title,
                 goods_text=request_body.goods_text,
+                llm_model=request_body.llm_model,
                 source=request_body.source,
                 tts_voice=request_body.tts_voice,
                 tts_speed=request_body.tts_speed,
                 tts_inference_mode=request_body.tts_inference_mode,
                 tts_workflow=request_body.tts_workflow,
                 ref_audio=request_body.ref_audio,
+                subtitle_enabled=request_body.subtitle_enabled,
+                subtitle_output=request_body.subtitle_output,
+                subtitle_language=request_body.subtitle_language,
+                progress_callback=on_progress,
             )
             
             file_size = result.file_size
-            local_url = path_to_url(request, result.video_path)
-            video_url = _upload_to_s3_if_available(result.video_path, local_url)
-            
-            # Clean up local task directory only after successful S3 upload
-            if video_url != local_url and result.task_dir:
-                from pixelle_video.utils.os_util import cleanup_task_dir
-                cleanup_task_dir(result.task_dir)
+            final_urls, local_urls = upload_outputs_to_s3_or_fallback(
+                request,
+                {
+                    "video": result.video_path,
+                    "subtitle": result.subtitle_path,
+                },
+            )
+            cleanup_after_uploads(final_urls, local_urls, result.task_dir)
             
             return {
-                "video_url": video_url,
+                "video_url": final_urls["video"],
                 "duration": result.duration,
-                "file_size": file_size
+                "file_size": file_size,
+                "subtitle_enabled": result.subtitle_enabled,
+                "subtitle_format": result.subtitle_format,
+                "subtitle_url": final_urls.get("subtitle"),
             }
         
         # Start execution

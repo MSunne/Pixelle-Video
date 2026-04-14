@@ -34,6 +34,8 @@ class APIConfig(BaseModel):
     max_concurrent_tasks: int = 5
     task_cleanup_interval: int = 3600  # Clean completed tasks every hour
     task_retention_time: int = 86400   # Keep task results for 24 hours
+    task_timeout: int = 1800           # Single task max runtime (30 minutes)
+    task_max_retries: int = 2          # Auto-retry count for retryable failures
     
     # File upload settings
     max_upload_size: int = 100 * 1024 * 1024  # 100MB

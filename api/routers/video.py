@@ -29,78 +29,9 @@ from api.schemas.video import (
     VideoGenerateAsyncResponse,
 )
 from api.tasks import task_manager, TaskType
+from api.utils.helpers import path_to_url, upload_to_s3_or_fallback, cleanup_after_upload
 
 router = APIRouter(prefix="/video", tags=["视频生成"])
-
-
-def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
-    """
-    Upload file to S3 if available, return S3 public URL.
-    Falls back to local API URL if S3 is not configured.
-    After successful S3 upload, local file is deleted to save disk space.
-    """
-    try:
-        from pixelle_video.storage import get_s3_storage
-        s3 = get_s3_storage()
-        if s3.is_available() and os.path.exists(local_path):
-            return s3.upload_video(local_path, cleanup_local=True)
-    except Exception as e:
-        logger.warning(f"[Video] S3 upload failed, using local URL: {e}")
-    return fallback_url
-
-
-def path_to_url(request: Request, file_path: str) -> str:
-    """
-    Convert file path to accessible URL
-    
-    Handles both absolute and relative paths, extracting the path relative
-    to the output directory for URL construction.
-    
-    Args:
-        request: FastAPI Request object (provides base_url from actual request)
-        file_path: Absolute or relative file path
-    
-    Returns:
-        Full URL to access the file
-    
-    Examples:
-        Windows: G:\\...\\output\\20251205_233630_c939\\final.mp4
-              -> http://localhost:8000/api/files/20251205_233630_c939/final.mp4
-        
-        Linux:   /home/user/.../output/20251205_233630_c939/final.mp4
-              -> http://localhost:8000/api/files/20251205_233630_c939/final.mp4
-        
-        Domain:  With domain request -> https://your-domain.com/api/files/...
-    """
-    from pathlib import Path
-    import os
-    
-    # Normalize path separators to forward slashes first (for cross-platform compatibility)
-    file_path = file_path.replace("\\", "/")
-    
-    # Check if it's an absolute path (works for both Windows and Linux)
-    is_absolute = os.path.isabs(file_path) or Path(file_path).is_absolute()
-    
-    if is_absolute:
-        # Find "output" in the path and get everything after it
-        # Split by / to work with normalized paths
-        parts = file_path.split("/")
-        try:
-            output_idx = parts.index("output")
-            # Get all parts after "output" and join them
-            relative_parts = parts[output_idx + 1:]
-            file_path = "/".join(relative_parts)
-        except ValueError:
-            # If "output" not in path, use the filename only
-            file_path = Path(file_path).name
-    else:
-        # If relative path starting with "output/", remove it
-        if file_path.startswith("output/"):
-            file_path = file_path[7:]  # Remove "output/"
-    
-    # Build URL using request's base_url (automatically matches the request host)
-    base_url = str(request.base_url).rstrip('/')
-    return f"{base_url}/api/files/{file_path}"
 
 
 @router.post("/generate/sync", response_model=VideoGenerateResponse)
@@ -186,13 +117,11 @@ async def generate_video_sync(
         
         # Upload to S3 or use local URL
         local_url = path_to_url(request, result.video_path)
-        video_url = _upload_to_s3_if_available(result.video_path, local_url)
+        video_url = upload_to_s3_or_fallback(result.video_path, local_url)
         
         # Clean up local task directory only after successful S3 upload
-        if video_url != local_url:
-            task_dir = str(Path(result.video_path).parent)
-            from pixelle_video.utils.os_util import cleanup_task_dir
-            cleanup_task_dir(task_dir)
+        task_dir = str(Path(result.video_path).parent)
+        cleanup_after_upload(video_url, local_url, task_dir)
         
         return VideoGenerateResponse(
             video_url=video_url,
@@ -270,9 +199,17 @@ async def generate_video_async(
                 "prompt_prefix": request_body.prompt_prefix,
                 "bgm_path": request_body.bgm_path,
                 "bgm_volume": request_body.bgm_volume,
-                # Progress callback can be added here if needed
-                # "progress_callback": lambda event: task_manager.update_progress(...)
             }
+            
+            # Progress callback: update task progress for polling clients
+            def on_progress(event):
+                task_manager.update_progress(
+                    task.task_id,
+                    current=int(event.progress * 100),
+                    total=100,
+                    message=getattr(event, 'extra_info', '') or event.event_type
+                )
+            video_params["progress_callback"] = on_progress
             
             # Add LLM model override if specified
             if request_body.llm_model:
@@ -302,13 +239,11 @@ async def generate_video_async(
             
             # Upload to S3 or use local URL
             local_url = path_to_url(request, result.video_path)
-            video_url = _upload_to_s3_if_available(result.video_path, local_url)
+            video_url = upload_to_s3_or_fallback(result.video_path, local_url)
             
             # Clean up local task directory only after successful S3 upload
-            if video_url != local_url:
-                task_dir = str(Path(result.video_path).parent)
-                from pixelle_video.utils.os_util import cleanup_task_dir
-                cleanup_task_dir(task_dir)
+            task_dir = str(Path(result.video_path).parent)
+            cleanup_after_upload(video_url, local_url, task_dir)
             
             return {
                 "video_url": video_url,

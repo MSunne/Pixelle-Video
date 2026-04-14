@@ -24,9 +24,11 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
+    "boto3>=1.42.0",
     "comfykit>=0.1.12",
     "beautifulsoup4>=4.14.2",
     "moviepy==1.0.3",
+    "faster-whisper>=1.1.1",
 ]
 
 [project.optional-dependencies]

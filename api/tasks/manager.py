@@ -34,14 +34,33 @@ class TaskManager:
     - In-memory storage (can be replaced with Redis later)
     - Task lifecycle management
     - Progress tracking
+    - Concurrency control via asyncio.Semaphore
+    - Automatic retry with exponential backoff
+    - Task timeout protection
     - Auto cleanup of old tasks
     """
+    
+    # Error messages / exception substrings that indicate a transient failure
+    # worth retrying (e.g. RunningHub rate limits, network hiccups).
+    _RETRYABLE_PATTERNS = (
+        "TASK_QUEUE_MAXED",
+        "timeout",
+        "Timeout",
+        "ConnectionError",
+        "ConnectError",
+        "RemoteDisconnected",
+        "ServerDisconnected",
+        "502",
+        "503",
+        "504",
+    )
     
     def __init__(self):
         self._tasks: Dict[str, Task] = {}
         self._task_futures: Dict[str, asyncio.Task] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
+        self._semaphore: Optional[asyncio.Semaphore] = None
     
     async def start(self):
         """Start task manager and cleanup scheduler"""
@@ -50,8 +69,10 @@ class TaskManager:
             return
         
         self._running = True
+        self._semaphore = asyncio.Semaphore(api_config.max_concurrent_tasks)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-        logger.info("✅ Task manager started")
+        logger.info(f"✅ Task manager started (max_concurrent={api_config.max_concurrent_tasks}, "
+                     f"timeout={api_config.task_timeout}s, max_retries={api_config.task_max_retries})")
     
     async def stop(self):
         """Stop task manager and cancel all tasks"""
@@ -102,6 +123,11 @@ class TaskManager:
         logger.info(f"Created task {task_id} ({task_type})")
         return task
     
+    def _is_retryable(self, error: Exception) -> bool:
+        """Check if an error is worth retrying"""
+        error_str = str(error)
+        return any(pattern in error_str for pattern in self._RETRYABLE_PATTERNS)
+    
     async def execute_task(
         self,
         task_id: str,
@@ -110,7 +136,7 @@ class TaskManager:
         **kwargs
     ):
         """
-        Execute task asynchronously
+        Execute task asynchronously with concurrency control, retry, and timeout.
         
         Args:
             task_id: Task ID
@@ -123,29 +149,88 @@ class TaskManager:
             logger.error(f"Task {task_id} not found")
             return
         
+        max_retries = api_config.task_max_retries
+        timeout = api_config.task_timeout
+        
         # Create async task
         async def _execute():
+            # Wait for a concurrency slot
+            if self._semaphore:
+                logger.debug(f"Task {task_id} waiting for concurrency slot...")
+                await self._semaphore.acquire()
+            
             try:
                 task.status = TaskStatus.RUNNING
                 task.started_at = datetime.now()
+                task.progress = TaskProgress(
+                    current=0, total=100, percentage=0.0, message="任务已启动"
+                )
                 logger.info(f"Task {task_id} started")
                 
-                # Execute the actual work
-                result = await coro_func(*args, **kwargs)
+                # Execute with retry and timeout
+                last_error = None
+                for attempt in range(max_retries + 1):
+                    try:
+                        result = await asyncio.wait_for(
+                            coro_func(*args, **kwargs),
+                            timeout=timeout
+                        )
+                        
+                        # Success
+                        task.status = TaskStatus.COMPLETED
+                        task.result = result
+                        task.completed_at = datetime.now()
+                        task.progress = TaskProgress(
+                            current=100, total=100, percentage=100.0, message="已完成"
+                        )
+                        logger.info(f"Task {task_id} completed")
+                        return
+                        
+                    except asyncio.TimeoutError:
+                        last_error = TimeoutError(
+                            f"Task exceeded {timeout}s timeout"
+                        )
+                        logger.error(f"Task {task_id} timed out after {timeout}s")
+                        break  # Don't retry timeouts
+                        
+                    except asyncio.CancelledError:
+                        task.status = TaskStatus.CANCELLED
+                        task.completed_at = datetime.now()
+                        logger.info(f"Task {task_id} cancelled")
+                        return
+                        
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries and self._is_retryable(e):
+                            wait_time = 2 ** attempt * 5  # 5s, 10s
+                            logger.warning(
+                                f"Task {task_id} attempt {attempt+1}/{max_retries+1} failed "
+                                f"(retryable), waiting {wait_time}s: {e}"
+                            )
+                            task.progress = TaskProgress(
+                                current=0, total=100, percentage=0.0,
+                                message=f"第{attempt+1}次重试中，等待{wait_time}秒..."
+                            )
+                            await asyncio.sleep(wait_time)
+                        else:
+                            break  # Non-retryable or exhausted retries
                 
-                # Update task with result
-                task.status = TaskStatus.COMPLETED
-                task.result = result
-                task.completed_at = datetime.now()
-                logger.info(f"Task {task_id} completed")
-                
-            except Exception as e:
+                # All retries exhausted
                 import traceback
                 tb = traceback.format_exc()
                 task.status = TaskStatus.FAILED
-                task.error = f"{type(e).__name__}: {e}\n\n{tb}"
+                task.error = f"{type(last_error).__name__}: {last_error}\n\n{tb}"
                 task.completed_at = datetime.now()
-                logger.error(f"Task {task_id} failed: {e}\n{tb}")
+                task.progress = TaskProgress(
+                    current=0, total=100, percentage=0.0,
+                    message=f"任务失败: {last_error}"
+                )
+                logger.error(f"Task {task_id} failed: {last_error}")
+                
+            finally:
+                # Release concurrency slot
+                if self._semaphore:
+                    self._semaphore.release()
         
         # Start execution
         future = asyncio.create_task(_execute())

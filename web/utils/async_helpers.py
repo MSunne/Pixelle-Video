@@ -23,6 +23,7 @@ from loguru import logger
 
 import threading
 import concurrent.futures
+from streamlit.runtime.scriptrunner import get_script_run_ctx, add_script_run_ctx
 
 # Start a background event loop for Streamlit so that all async calls 
 # share the same loop. This prevents 'attached to a different loop'
@@ -35,9 +36,21 @@ _loop_thread.start()
 
 def run_async(coro):
     """Run async coroutine in the shared background event loop context"""
-    future = asyncio.run_coroutine_threadsafe(coro, _shared_loop)
-    return future.result()
+    ctx = get_script_run_ctx()
 
+    async def wrapper():
+        if ctx:
+            # Set the streamline context to the current thread (_loop_thread)
+            add_script_run_ctx(threading.current_thread(), ctx)
+        try:
+            return await coro
+        finally:
+            if ctx:
+                # Remove the context after the task is done so it doesn't leak
+                setattr(threading.current_thread(), "streamlit_script_run_ctx", None)
+
+    future = asyncio.run_coroutine_threadsafe(wrapper(), _shared_loop)
+    return future.result()
 
 def get_project_version():
     """Get project version from pyproject.toml"""

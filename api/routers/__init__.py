@@ -26,6 +26,8 @@ from api.routers.resources import router as resources_router
 from api.routers.frame import router as frame_router
 from api.routers.digital_human import router as digital_human_router
 from api.routers.digital_human_flow import router as digital_human_flow_router
+from api.routers.i2v import router as i2v_router
+from api.routers.action_transfer import router as action_transfer_router
 
 __all__ = [
     "health_router",
@@ -40,5 +42,7 @@ __all__ = [
     "frame_router",
     "digital_human_router",
     "digital_human_flow_router",
+    "i2v_router",
+    "action_transfer_router",
 ]
 

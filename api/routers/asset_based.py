@@ -19,48 +19,10 @@ from api.schemas.asset_based import (
     AssetBasedVideoAsyncResponse,
 )
 from api.tasks import task_manager, TaskType
+from api.utils.helpers import path_to_url, upload_to_s3_or_fallback, cleanup_after_upload
 
 
 router = APIRouter(prefix="/asset-video", tags=["自定义素材视频生成"])
-
-
-def path_to_url(request: Request, file_path: str) -> str:
-    """Convert file path to accessible URL."""
-    from pathlib import Path
-
-    file_path = file_path.replace("\\", "/")
-    is_absolute = os.path.isabs(file_path) or Path(file_path).is_absolute()
-
-    if is_absolute:
-        parts = file_path.split("/")
-        try:
-            output_idx = parts.index("output")
-            relative_parts = parts[output_idx + 1:]
-            file_path = "/".join(relative_parts)
-        except ValueError:
-            file_path = Path(file_path).name
-    else:
-        if file_path.startswith("output/"):
-            file_path = file_path[7:]
-
-    base_url = str(request.base_url).rstrip('/')
-    return f"{base_url}/api/files/{file_path}"
-
-
-def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
-    """
-    Upload file to S3 if available, return S3 public URL.
-    Falls back to local API URL if S3 is not configured.
-    After successful S3 upload, local file is deleted to save disk space.
-    """
-    try:
-        from pixelle_video.storage import get_s3_storage
-        s3 = get_s3_storage()
-        if s3.is_available() and os.path.exists(local_path):
-            return s3.upload_video(local_path, cleanup_local=True)
-    except Exception as e:
-        logger.warning(f"[AssetVideo] S3 upload failed, using local URL: {e}")
-    return fallback_url
 
 
 @router.post("/generate/sync", response_model=AssetBasedVideoResponse)
@@ -114,12 +76,11 @@ async def generate_asset_video_sync(
         
         # Upload to S3 or use local URL
         local_url = path_to_url(request, ctx.final_video_path)
-        video_url = _upload_to_s3_if_available(ctx.final_video_path, local_url)
+        video_url = upload_to_s3_or_fallback(ctx.final_video_path, local_url)
         
         # Clean up local task directory only after successful S3 upload
-        if video_url != local_url and hasattr(ctx, 'task_dir') and ctx.task_dir:
-            from pixelle_video.utils.os_util import cleanup_task_dir
-            cleanup_task_dir(str(ctx.task_dir))
+        task_dir = getattr(ctx, 'task_dir', None)
+        cleanup_after_upload(video_url, local_url, str(task_dir) if task_dir else "")
         
         return AssetBasedVideoResponse(
             video_url=video_url,
@@ -167,6 +128,15 @@ async def generate_asset_video_async(
             
             pipeline = AssetBasedPipeline(pixelle_video)
             
+            # Progress callback for polling clients
+            def on_progress(event):
+                task_manager.update_progress(
+                    task.task_id,
+                    current=int(event.progress * 100),
+                    total=100,
+                    message=getattr(event, 'extra_info', '') or event.event_type
+                )
+            
             ctx = await pipeline(
                 assets=request_body.assets,
                 video_title=request_body.video_title,
@@ -179,18 +149,18 @@ async def generate_asset_video_async(
                 bgm_volume=request_body.bgm_volume,
                 bgm_mode=request_body.bgm_mode,
                 llm_model=request_body.llm_model,
+                progress_callback=on_progress,
             )
             
             file_size = os.path.getsize(ctx.final_video_path) if os.path.exists(ctx.final_video_path) else 0
             duration = sum(f.duration for f in ctx.storyboard.frames if hasattr(f, 'duration') and f.duration)
             
             local_url = path_to_url(request, ctx.final_video_path)
-            video_url = _upload_to_s3_if_available(ctx.final_video_path, local_url)
+            video_url = upload_to_s3_or_fallback(ctx.final_video_path, local_url)
             
             # Clean up local task directory only after successful S3 upload
-            if video_url != local_url and hasattr(ctx, 'task_dir') and ctx.task_dir:
-                from pixelle_video.utils.os_util import cleanup_task_dir
-                cleanup_task_dir(str(ctx.task_dir))
+            task_dir = getattr(ctx, 'task_dir', None)
+            cleanup_after_upload(video_url, local_url, str(task_dir) if task_dir else "")
             
             return {
                 "video_url": video_url,

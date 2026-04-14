@@ -5,15 +5,14 @@ from typing import Any
 
 import streamlit as st
 from loguru import logger
-import httpx
-from web.i18n import tr, get_language
-from web.pipelines.base import PipelineUI, register_pipeline_ui
+
+from pixelle_video.config import config_manager
 from web.components.content_input import render_version_info
 from web.components.digital_tts_config import render_style_config
+from web.i18n import get_language, tr
+from web.pipelines.base import PipelineUI, register_pipeline_ui
 from web.utils.async_helpers import run_async
-from web.utils.streamlit_helpers import check_and_warn_selfhost_workflow
-from pixelle_video.config import config_manager
-from pixelle_video.utils.os_util import create_task_output_dir
+
 
 class DigitalHumanPipelineUI(PipelineUI):
     """
@@ -178,6 +177,7 @@ class DigitalHumanPipelineUI(PipelineUI):
                     # Warn for the first workflow as representative
                     # TODO: need to check if the workflow is valid
                     # check_and_warn_selfhost_workflow("selfhost/digital_image.json")
+            workflow_config["source"] = source
             return workflow_config
 
     def render_digital_human_mode(self, character_asset_paths: list) -> dict:
@@ -299,7 +299,7 @@ class DigitalHumanPipelineUI(PipelineUI):
             tts_voice = video_params.get("tts_voice", "zh-CN-YunjianNeural")
             tts_speed = video_params.get("tts_speed", 1.2)
             
-            logger.info(f"🔧 The obtained TTS parameters:")
+            logger.info("🔧 The obtained TTS parameters:")
             logger.info(f"  - tts_voice: {tts_voice}")
             logger.info(f"  - tts_speed: {tts_speed}")
             logger.info(f"  - video_params中的tts_voice: {video_params.get('tts_voice', 'NOT_FOUND')}")
@@ -367,262 +367,51 @@ class DigitalHumanPipelineUI(PipelineUI):
                 start_time = time.time()
                 
                 try:
-                    # Define async generation function
                     async def generate_digital_human_video():
-                        task_dir, task_id = create_task_output_dir()
-                        kit = await pixelle_video._get_or_create_comfykit()
-                        workflow_path = video_params["workflow_path"]
+                        from pixelle_video.pipelines.digital_human import DigitalHumanPipeline
 
-                        import json
-                        from pathlib import Path
+                        pipeline = DigitalHumanPipeline(pixelle_video)
 
-                        if mode == "customize":
-                            status_text.text(tr("progress.step_audio"))
-                            progress_bar.progress(25)
-                            generated_image_path = character_assets[0]   
-                            generated_text = goods_text                 
+                        step_messages = {
+                            "combine_image": tr("progress.step_image"),
+                            "synthesis": tr("progress.step_image"),
+                            "tts": tr("progress.step_audio"),
+                            "video_synthesis": tr("progress.concatenating"),
+                            "subtitle_translation": "正在生成双语字幕...",
+                            "subtitle_alignment": "正在对齐字幕时间轴...",
+                            "subtitle_burn": "正在烧录字幕...",
+                            "completed": tr("status.success"),
+                        }
 
-                            # TTS
-                            audio_path = os.path.join(task_dir, "narration.mp3")
-                            tts_inference_mode = video_params.get("tts_inference_mode", "local")
-                            tts_voice = video_params.get("tts_voice")
-                            tts_speed = video_params.get("tts_speed")
-                            tts_workflow = video_params.get("tts_workflow")
-                            ref_audio = video_params.get("ref_audio")
+                        def on_progress(data: dict):
+                            progress_bar.progress(int(data.get("progress", 0.0) * 100))
+                            status_text.text(
+                                step_messages.get(
+                                    data.get("step", ""),
+                                    "正在处理中..." if get_language() == "zh_CN" else "Processing..."
+                                )
+                            )
 
-                            tts_kwargs = {
-                                "text": generated_text,
-                                "output_path": audio_path,
-                                "inference_mode": tts_inference_mode
-                            }
-                            if tts_inference_mode == "local":
-                                tts_kwargs["voice"] = tts_voice
-                                tts_kwargs["speed"] = tts_speed
-                            elif tts_inference_mode == "comfyui":
-                                if tts_workflow:
-                                    tts_kwargs["workflow"] = tts_workflow
-                                if ref_audio:
-                                    tts_kwargs["ref_audio"] = ref_audio
-
-                            await pixelle_video.tts(**tts_kwargs)
-                            progress_bar.progress(65)
-                            status_text.text(tr("progress.concatenating"))
-
-                            # Directly call the second workflow
-                            second_workflow_path = Path(workflow_path.get("second_workflow_path"))
-                            if not second_workflow_path.exists():
-                                raise Exception(f"The second step workflow file does not exist:{second_workflow_path}")
-                            with open(second_workflow_path, 'r', encoding='utf-8') as f:
-                                second_workflow_config = json.load(f)
-                            second_workflow_params = {
-                                "videoimage": generated_image_path,
-                                "audio": audio_path
-                            }
-                            if second_workflow_config.get("source") == "runninghub" and "workflow_id" in second_workflow_config:
-                                workflow_input = second_workflow_config["workflow_id"]
-                            else:
-                                workflow_input = str(second_workflow_config)
-                            second_result = await kit.execute(workflow_input, second_workflow_params)
-                            # Video Link Extraction
-                            generated_video_url = None
-                            if hasattr(second_result, 'videos') and second_result.videos:
-                                generated_video_url = second_result.videos[0]
-                            elif hasattr(second_result, 'outputs') and second_result.outputs:
-                                for node_id, node_output in second_result.outputs.items():
-                                    if isinstance(node_output, dict) and 'videos' in node_output:
-                                        videos = node_output['videos']
-                                        if videos and len(videos) > 0:
-                                            generated_video_url = videos[0]
-                                            break
-                            if not generated_video_url:
-                                raise Exception("The second step of the workflow did not return a video. Please check the workflow configuration.")
-                                        
-                            final_video_path = os.path.join(task_dir, "final.mp4")
-                            timeout = httpx.Timeout(300.0)
-                            async with httpx.AsyncClient(timeout=timeout) as client:
-                                response = await client.get(generated_video_url)
-                                response.raise_for_status()
-                                with open(final_video_path, 'wb') as f:
-                                    f.write(response.content)
-                            progress_bar.progress(100)
-                            status_text.text(tr("status.success"))
-                            return final_video_path
-                        
-                        else:
-                            #Initialization and parameter preparation
-                            task_dir, task_id = create_task_output_dir()
-                            logger.info(f"[Initialization] Task Directory: {task_dir}")
-
-                            first_workflow_path = Path(workflow_path.get("first_workflow_path"))
-                            third_workflow_path = Path(workflow_path.get("third_workflow_path"))
-                            second_workflow_path = Path(workflow_path.get("second_workflow_path"))
-                            assert first_workflow_path.exists(), "The first_workflow file does not exist."
-                            assert third_workflow_path.exists(), "The third_workflow file does not exist."
-                            assert second_workflow_path.exists(), "The  second_workflow file does not exist."
-
-                            if goods_text and goods_text.strip():
-                                workflow_path = third_workflow_path
-                                workflow_params = {"firstimage": character_assets[0], "secondimage": goods_assets[0]}
-                                generated_text = goods_text
-
-                                status_text.text(tr("progress.step_image"))
-                                kit = await pixelle_video._get_or_create_comfykit()
-                                workflow_config = json.load(open(workflow_path, 'r', encoding='utf8'))
-                                if workflow_config.get("source") == "runninghub" and "workflow_id" in workflow_config:
-                                    workflow_input = workflow_config["workflow_id"]
-                                else:
-                                    workflow_input = str(workflow_config)
-                                combine_image = await kit.execute(workflow_input, workflow_params)
-                                if combine_image.status != "completed":
-                                    raise Exception(f"workflow execution failed: {combine_image.msg}")
-                                generated_image_url = getattr(combine_image, "images", [None])[0]
-                                status_text.text(tr("progress.step_audio"))
-                                audio_path = os.path.join(task_dir, "narration.mp3")
-                                tts_inference_mode = video_params.get("tts_inference_mode", "local")
-                                tts_voice = video_params.get("tts_voice")
-                                tts_speed = video_params.get("tts_speed")
-                                tts_workflow = video_params.get("tts_workflow")
-                                ref_audio = video_params.get("ref_audio")
-
-                                tts_kwargs = {
-                                    "text": generated_text,
-                                    "output_path": audio_path,
-                                    "inference_mode": tts_inference_mode
-                                }
-                                if tts_inference_mode == "local":
-                                    tts_kwargs["voice"] = tts_voice
-                                    tts_kwargs["speed"] = tts_speed
-                                elif tts_inference_mode == "comfyui":
-                                    if tts_workflow:
-                                        tts_kwargs["workflow"] = tts_workflow
-                                    if ref_audio:
-                                        tts_kwargs["ref_audio"] = ref_audio
-
-                                await pixelle_video.tts(**tts_kwargs)
-                                progress_bar.progress(65)
-                                status_text.text(tr("progress.concatenating"))
-
-                                if not second_workflow_path.exists():
-                                    raise Exception(f"The second step workflow file does not exist:{second_workflow_path}")
-                                with open(second_workflow_path, 'r', encoding='utf-8') as f:
-                                    second_workflow_config = json.load(f)
-                                second_workflow_params = {
-                                    "videoimage": generated_image_url,
-                                    "audio": audio_path
-                                }
-                                if second_workflow_config.get("source") == "runninghub" and "workflow_id" in second_workflow_config:
-                                    workflow_input = second_workflow_config["workflow_id"]
-                                else:
-                                    workflow_input = str(second_workflow_config)
-                                second_result = await kit.execute(workflow_input, second_workflow_params)
-                                # Video Link Extraction
-                                generated_video_url = None
-                                if hasattr(second_result, 'videos') and second_result.videos:
-                                    generated_video_url = second_result.videos[0]
-                                elif hasattr(second_result, 'outputs') and second_result.outputs:
-                                    for node_id, node_output in second_result.outputs.items():
-                                        if isinstance(node_output, dict) and 'videos' in node_output:
-                                            videos = node_output['videos']
-                                            if videos and len(videos) > 0:
-                                                generated_video_url = videos[0]
-                                                break
-                                if not generated_video_url:
-                                    raise Exception("The second step of the workflow did not return a video. Please check the workflow configuration.")
-                                            
-                                final_video_path = os.path.join(task_dir, "final.mp4")
-                                timeout = httpx.Timeout(300.0)
-                                async with httpx.AsyncClient(timeout=timeout) as client:
-                                    response = await client.get(generated_video_url)
-                                    response.raise_for_status()
-                                    with open(final_video_path, 'wb') as f:
-                                        f.write(response.content)
-                                progress_bar.progress(100)
-                                status_text.text(tr("status.success"))
-                                return final_video_path
+                        return await pipeline(
+                            character_assets=character_assets,
+                            mode=mode,
+                            goods_assets=goods_assets,
+                            goods_title=goods_title,
+                            goods_text=goods_text,
+                            source=video_params["workflow_path"].get("source", "runninghub"),
+                            tts_voice=video_params.get("tts_voice"),
+                            tts_speed=video_params.get("tts_speed"),
+                            tts_inference_mode=video_params.get("tts_inference_mode", "local"),
+                            tts_workflow=video_params.get("tts_workflow"),
+                            ref_audio=video_params.get("ref_audio"),
+                            subtitle_enabled=True,
+                            subtitle_output="both",
+                            subtitle_language="zh_en",
+                            progress_callback=on_progress,
+                        )
                                 
-                            else:
-                                workflow_path = first_workflow_path
-                                workflow_params = {"firstimage": character_assets[0], "secondimage": goods_assets[0], "goodstype": goods_title}
-                                
-                                status_text.text(tr("progress.step_image"))
-                                kit = await pixelle_video._get_or_create_comfykit()
-                                workflow_config = json.load(open(workflow_path, 'r', encoding='utf8'))
-                                if workflow_config.get("source") == "runninghub" and "workflow_id" in workflow_config:
-                                    workflow_input = workflow_config["workflow_id"]
-                                else:
-                                    workflow_input = str(workflow_config)
-                                synthesis_result = await kit.execute(workflow_input, workflow_params)
-                                if synthesis_result.status != "completed":
-                                    raise Exception(f"workflow execution failed: {synthesis_result.msg}")
-                                generated_image_url = getattr(synthesis_result, "images", [None])[0]
-                                generated_text = getattr(synthesis_result, "texts", [None])[0]
-                                
-                                status_text.text(tr("progress.step_audio"))
-                                audio_path = os.path.join(task_dir, "narration.mp3")
-                                tts_inference_mode = video_params.get("tts_inference_mode", "local")
-                                tts_voice = video_params.get("tts_voice")
-                                tts_speed = video_params.get("tts_speed")
-                                tts_workflow = video_params.get("tts_workflow")
-                                ref_audio = video_params.get("ref_audio")
-
-                                tts_kwargs = {
-                                    "text": generated_text,
-                                    "output_path": audio_path,
-                                    "inference_mode": tts_inference_mode
-                                }
-                                if tts_inference_mode == "local":
-                                    tts_kwargs["voice"] = tts_voice
-                                    tts_kwargs["speed"] = tts_speed
-                                elif tts_inference_mode == "comfyui":
-                                    if tts_workflow:
-                                        tts_kwargs["workflow"] = tts_workflow
-                                    if ref_audio:
-                                        tts_kwargs["ref_audio"] = ref_audio
-
-                                await pixelle_video.tts(**tts_kwargs)
-                                progress_bar.progress(65)
-                                status_text.text(tr("progress.concatenating"))
-
-                                if not second_workflow_path.exists():
-                                    raise Exception(f"The second step workflow file does not exist:{second_workflow_path}")
-                                with open(second_workflow_path, 'r', encoding='utf-8') as f:
-                                    second_workflow_config = json.load(f)
-                                second_workflow_params = {
-                                    "videoimage": generated_image_url,
-                                    "audio": audio_path
-                                }
-                                if second_workflow_config.get("source") == "runninghub" and "workflow_id" in second_workflow_config:
-                                    workflow_input = second_workflow_config["workflow_id"]
-                                else:
-                                    workflow_input = str(second_workflow_config)
-                                second_result = await kit.execute(workflow_input, second_workflow_params)
-                                # Video Link Extraction
-                                generated_video_url = None
-                                if hasattr(second_result, 'videos') and second_result.videos:
-                                    generated_video_url = second_result.videos[0]
-                                elif hasattr(second_result, 'outputs') and second_result.outputs:
-                                    for node_id, node_output in second_result.outputs.items():
-                                        if isinstance(node_output, dict) and 'videos' in node_output:
-                                            videos = node_output['videos']
-                                            if videos and len(videos) > 0:
-                                                generated_video_url = videos[0]
-                                                break
-                                if not generated_video_url:
-                                    raise Exception("The second step of the workflow did not return a video. Please check the workflow configuration.")
-                                            
-                                final_video_path = os.path.join(task_dir, "final.mp4")
-                                timeout = httpx.Timeout(300.0)
-                                async with httpx.AsyncClient(timeout=timeout) as client:
-                                    response = await client.get(generated_video_url)
-                                    response.raise_for_status()
-                                    with open(final_video_path, 'wb') as f:
-                                        f.write(response.content)
-                                progress_bar.progress(100)
-                                status_text.text(tr("status.success"))
-                                return final_video_path
-                                
-                    # Execute async generation
-                    final_video_path = run_async(generate_digital_human_video())
+                    result = run_async(generate_digital_human_video())
+                    final_video_path = result.video_path
                     
                     total_time = time.time() - start_time
                     progress_bar.progress(100)
@@ -659,6 +448,18 @@ class DigitalHumanPipelineUI(PipelineUI):
                                 mime="video/mp4",
                                 use_container_width=True
                             )
+
+                        if result.subtitle_path and os.path.exists(result.subtitle_path):
+                            with open(result.subtitle_path, "rb") as subtitle_file:
+                                subtitle_bytes = subtitle_file.read()
+                                st.download_button(
+                                    label="⬇️ 下载 SRT" if get_language() == "zh_CN" else "⬇️ Download SRT",
+                                    data=subtitle_bytes,
+                                    file_name=os.path.basename(result.subtitle_path),
+                                    mime="text/plain",
+                                    use_container_width=True,
+                                    key="digital_human_download_srt",
+                                )
                     else:
                         st.error(tr("status.video_not_found", path=final_video_path))
                 
@@ -672,4 +473,3 @@ class DigitalHumanPipelineUI(PipelineUI):
 
 # Register self
 register_pipeline_ui(DigitalHumanPipelineUI)
-

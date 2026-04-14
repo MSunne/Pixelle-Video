@@ -14,17 +14,41 @@
 TTS (Text-to-Speech) Service - Supports both local and ComfyUI inference
 """
 
-import os
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from comfykit import ComfyKit
 from loguru import logger
 
 from pixelle_video.services.comfy_base_service import ComfyBaseService
-from pixelle_video.utils.tts_util import edge_tts
 from pixelle_video.tts_voices import speed_to_rate
+from pixelle_video.utils.tts_util import edge_tts, edge_tts_with_boundaries
+
+
+@dataclass
+class TTSBoundary:
+    """Boundary metadata emitted during speech synthesis."""
+    type: str
+    offset: int
+    duration: int
+    text: str
+
+    @property
+    def start_seconds(self) -> float:
+        return self.offset / 10_000_000
+
+    @property
+    def end_seconds(self) -> float:
+        return (self.offset + self.duration) / 10_000_000
+
+
+@dataclass
+class TTSResult:
+    """Speech synthesis output with optional boundary metadata."""
+    audio_path: str
+    boundaries: list[TTSBoundary] = field(default_factory=list)
+    inference_mode: str = "local"
 
 
 class TTSService(ComfyBaseService):
@@ -76,8 +100,9 @@ class TTSService(ComfyBaseService):
         inference_mode: Optional[str] = None,
         # Output path
         output_path: Optional[str] = None,
+        return_result: bool = False,
         **params
-    ) -> str:
+    ) -> str | TTSResult:
         """
         Generate speech using local Edge TTS or ComfyUI workflow
         
@@ -120,7 +145,8 @@ class TTSService(ComfyBaseService):
                 text=text,
                 voice=voice,
                 speed=speed,
-                output_path=output_path
+                output_path=output_path,
+                return_result=return_result,
             )
         else:  # comfyui
             # 1. Resolve workflow (returns structured info)
@@ -135,6 +161,7 @@ class TTSService(ComfyBaseService):
                 voice=voice,
                 speed=speed,
                 output_path=output_path,
+                return_result=return_result,
                 **params
             )
     
@@ -144,7 +171,8 @@ class TTSService(ComfyBaseService):
         voice: Optional[str] = None,
         speed: Optional[float] = None,
         output_path: Optional[str] = None,
-    ) -> str:
+        return_result: bool = False,
+    ) -> str | TTSResult:
         """
         Generate speech using local Edge TTS
         
@@ -180,14 +208,30 @@ class TTSService(ComfyBaseService):
         
         # Call Edge TTS
         try:
-            audio_bytes = await edge_tts(
-                text=text,
-                voice=final_voice,
-                rate=rate,
-                output_path=output_path
-            )
-            
+            boundaries: list[TTSBoundary] = []
+            if return_result:
+                _, raw_boundaries = await edge_tts_with_boundaries(
+                    text=text,
+                    voice=final_voice,
+                    rate=rate,
+                    output_path=output_path,
+                )
+                boundaries = [TTSBoundary(**item) for item in raw_boundaries]
+            else:
+                await edge_tts(
+                    text=text,
+                    voice=final_voice,
+                    rate=rate,
+                    output_path=output_path
+                )
+
             logger.info(f"✅ Generated audio (local Edge TTS): {output_path}")
+            if return_result:
+                return TTSResult(
+                    audio_path=output_path,
+                    boundaries=boundaries,
+                    inference_mode="local",
+                )
             return output_path
         
         except Exception as e:
@@ -203,8 +247,9 @@ class TTSService(ComfyBaseService):
         voice: Optional[str] = None,
         speed: float = 1.0,
         output_path: Optional[str] = None,
+        return_result: bool = False,
         **params
-    ) -> str:
+    ) -> str | TTSResult:
         """
         Generate speech using ComfyUI workflow
         
@@ -284,7 +329,7 @@ class TTSService(ComfyBaseService):
             
             if not audio_path:
                 logger.error("No audio file generated")
-                logger.error(f"❌ Result analysis:")
+                logger.error("❌ Result analysis:")
                 logger.error(f"   - result.audios: {getattr(result, 'audios', 'NOT_FOUND')}")
                 logger.error(f"   - result.files: {getattr(result, 'files', 'NOT_FOUND')}")
                 logger.error(f"   - result.outputs: {getattr(result, 'outputs', 'NOT_FOUND')}")
@@ -293,8 +338,9 @@ class TTSService(ComfyBaseService):
             
             # If output_path provided and audio_path is URL, download to local
             if output_path and audio_path.startswith(('http://', 'https://')):
-                import httpx
                 import os
+
+                import httpx
                 
                 # Ensure parent directory exists
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -308,9 +354,13 @@ class TTSService(ComfyBaseService):
                         f.write(response.content)
                 
                 logger.info(f"✅ Generated audio (ComfyUI): {output_path}")
+                if return_result:
+                    return TTSResult(audio_path=output_path, inference_mode="comfyui")
                 return output_path
             
             logger.info(f"✅ Generated audio (ComfyUI): {audio_path}")
+            if return_result:
+                return TTSResult(audio_path=audio_path, inference_mode="comfyui")
             return audio_path
         
         except Exception as e:

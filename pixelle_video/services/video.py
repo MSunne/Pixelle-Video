@@ -26,6 +26,7 @@ Note: Requires FFmpeg to be installed on the system.
 
 import os
 import shutil
+import subprocess
 import tempfile
 import uuid
 from pathlib import Path
@@ -34,11 +35,7 @@ from typing import List, Literal, Optional
 import ffmpeg
 from loguru import logger
 
-from pixelle_video.utils.os_util import (
-    get_resource_path,
-    list_resource_files,
-    resource_exists
-)
+from pixelle_video.utils.os_util import get_resource_path, list_resource_files, resource_exists
 
 
 def check_ffmpeg() -> None:
@@ -55,6 +52,22 @@ def check_ffmpeg() -> None:
             "  Ubuntu/Debian: apt-get install ffmpeg\n"
             "  Windows: https://ffmpeg.org/download.html"
         )
+
+
+def check_ffmpeg_filter(filter_name: str) -> bool:
+    """Check whether the installed FFmpeg exposes a given filter."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = f"{result.stdout}\n{result.stderr}"
+        return filter_name in output
+    except Exception as exc:
+        logger.warning(f"Failed to inspect FFmpeg filters: {exc}")
+        return False
 
 
 # Check FFmpeg availability on module import
@@ -176,6 +189,56 @@ class VideoService:
                 return self._concat_demuxer(videos, output)
             else:
                 return self._concat_filter(videos, output)
+
+    def ensure_subtitle_burn_support(self) -> None:
+        """Validate that FFmpeg can burn ASS/SRT subtitles."""
+        if not check_ffmpeg_filter("subtitles"):
+            raise RuntimeError(
+                "FFmpeg subtitles filter is not available. Install a full FFmpeg build with libass support."
+            )
+
+    def burn_ass_subtitles(
+        self,
+        video: str,
+        ass_path: str,
+        output: str,
+        fontsdir: Optional[str] = None,
+    ) -> str:
+        """
+        Burn ASS subtitles into a video using FFmpeg's subtitles filter.
+        """
+        self.ensure_subtitle_burn_support()
+
+        subtitle_filter = f"subtitles='{self._escape_filter_path(ass_path)}'"
+        if fontsdir:
+            subtitle_filter += f":fontsdir='{self._escape_filter_path(fontsdir)}'"
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video,
+            "-vf",
+            subtitle_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "20",
+            "-c:a",
+            "copy",
+            output,
+        ]
+
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.success(f"Subtitles burned successfully: {output}")
+            return output
+        except subprocess.CalledProcessError as exc:
+            error_msg = exc.stderr or str(exc)
+            logger.error(f"FFmpeg subtitle burn error: {error_msg}")
+            raise RuntimeError(f"Failed to burn subtitles into video: {error_msg}")
     
     def _concat_demuxer(self, videos: List[str], output: str) -> str:
         """
@@ -246,7 +309,7 @@ class VideoService:
             
             # Run command
             import subprocess
-            result = subprocess.run(
+            subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -422,7 +485,6 @@ class VideoService:
                 fps = fps_num / fps_den if fps_den != 0 else 30
                 
                 # Create black video for padding
-                black_video_path = self._get_unique_temp_path("black_pad", os.path.basename(output))
                 black_input = ffmpeg.input(
                     f'color=c=black:s={width}x{height}:r={fps}',
                     f='lavfi',
@@ -444,7 +506,7 @@ class VideoService:
             audio_stream = audio_stream.filter('apad', whole_dur=target_duration)
         
         if not video_has_audio:
-            logger.info(f"Video has no audio stream, adding audio track")
+            logger.info("Video has no audio stream, adding audio track")
             # Video is silent, just add the audio
             try:
                 (
@@ -804,6 +866,11 @@ class VideoService:
             loop=loop,
             fade_in=0.0
         )
+
+    def _escape_filter_path(self, path: str) -> str:
+        """Escape a filesystem path for FFmpeg filter arguments."""
+        normalized = Path(path).absolute().as_posix()
+        return normalized.replace(":", r"\:").replace("'", r"\'")
     
     def _get_unique_temp_path(self, prefix: str, original_filename: str) -> str:
         """
@@ -1004,4 +1071,3 @@ class VideoService:
             error_msg = e.stderr.decode() if e.stderr else str(e)
             logger.error(f"FFmpeg error padding video: {error_msg}")
             raise RuntimeError(f"Failed to pad video: {error_msg}")
-

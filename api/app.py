@@ -56,6 +56,8 @@ from api.routers import (
     frame_router,
     digital_human_router,
     digital_human_flow_router,
+    i2v_router,
+    action_transfer_router,
 )
 
 
@@ -143,6 +145,8 @@ app.include_router(content_router, prefix=api_config.api_prefix)
 app.include_router(video_router, prefix=api_config.api_prefix)
 app.include_router(digital_human_router, prefix=api_config.api_prefix)
 app.include_router(digital_human_flow_router, prefix=api_config.api_prefix)
+app.include_router(i2v_router, prefix=api_config.api_prefix)
+app.include_router(action_transfer_router, prefix=api_config.api_prefix)
 app.include_router(tasks_router, prefix=api_config.api_prefix)
 app.include_router(files_router, prefix=api_config.api_prefix)
 app.include_router(resources_router, prefix=api_config.api_prefix)
@@ -160,6 +164,8 @@ async def root():
         "api": {
             "digital_human": f"{api_config.api_prefix}/digital-human",
             "digital_human_flow": f"{api_config.api_prefix}/step3-generate-video",
+            "i2v": f"{api_config.api_prefix}/i2v",
+            "action_transfer": f"{api_config.api_prefix}/action-transfer",
             "llm": f"{api_config.api_prefix}/llm",
             "tts": f"{api_config.api_prefix}/tts",
             "image": f"{api_config.api_prefix}/image",

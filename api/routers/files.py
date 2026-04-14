@@ -17,6 +17,7 @@ Provides access to generated files (videos, images, audio) and resource files.
 """
 
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from loguru import logger
@@ -108,6 +109,8 @@ async def get_file(file_path: str):
             '.gif': 'image/gif',
             '.html': 'text/html',
             '.json': 'application/json',
+            '.srt': 'text/plain; charset=utf-8',
+            '.ass': 'text/plain; charset=utf-8',
         }
         media_type = media_types.get(suffix, 'application/octet-stream')
         
@@ -125,4 +128,3 @@ async def get_file(file_path: str):
     except Exception as e:
         logger.error(f"File access error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

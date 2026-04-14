@@ -3,10 +3,6 @@ Guided step-by-step Digital Human Video Generation workflow router.
 Provides a consolidated, linear Swagger experience.
 """
 
-import os
-from pathlib import Path
-import uuid
-import shutil
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
@@ -15,49 +11,18 @@ from api.schemas.digital_human_flow import (
     Step3GenerateRequest,
     Step3GenerateResponse,
 )
-from api.tasks import Task
-from api.tasks import task_manager, TaskType
+from api.tasks import Task, TaskType, task_manager
+from api.utils.helpers import cleanup_after_uploads, upload_outputs_to_s3_or_fallback
 
 router = APIRouter()
-
-
-def _path_to_url(request: Request, file_path: str) -> str:
-    """Helper to convert server path to preview URL"""
-    file_path = file_path.replace("\\", "/")
-    is_absolute = os.path.isabs(file_path) or Path(file_path).is_absolute()
-
-    if is_absolute:
-        parts = file_path.split("/")
-        try:
-            output_idx = parts.index("output")
-            file_path = "/".join(parts[output_idx + 1:])
-        except ValueError:
-            file_path = Path(file_path).name
-    else:
-        if file_path.startswith("output/"):
-            file_path = file_path[7:]
-
-    base_url = str(request.base_url).rstrip('/')
-    return f"{base_url}/api/files/{file_path}"
-
-
-def _upload_to_s3_if_available(local_path: str, fallback_url: str) -> str:
-    """Upload to S3 if configured"""
-    try:
-        from pixelle_video.storage import get_s3_storage
-        s3 = get_s3_storage()
-        if s3.is_available() and os.path.exists(local_path):
-            return s3.upload_video(local_path, cleanup_local=True)
-    except Exception as e:
-        logger.warning(f"[DigitalHumanFlow] S3 upload failed: {e}")
-    return fallback_url
 
 
 
 @router.post("/step3-generate-video", response_model=Step3GenerateResponse, tags=["数字人视频"], summary="开始生成数字人视频（口播/带货）")
 async def step3_generate_video(
     request_body: Step3GenerateRequest,
-    pixelle_video: PixelleVideoDep
+    pixelle_video: PixelleVideoDep,
+    request: Request,
 ):
     """
     提交所有信息，异步开始生成数字人视频。
@@ -83,6 +48,9 @@ async def step3_generate_video(
             source=request_body.source,
             tts_inference_mode="comfyui",
             ref_audio=request_body.ref_audio,
+            subtitle_enabled=request_body.subtitle_enabled,
+            subtitle_output=request_body.subtitle_output,
+            subtitle_language=request_body.subtitle_language,
         )
         
         # Create Task
@@ -106,6 +74,9 @@ async def step3_generate_video(
                         "synthesis": "正在生成解说文案与关键图...",
                         "tts": "正在合成语音配音...",
                         "video_synthesis": "正在合成对口型视频并渲染...",
+                        "subtitle_translation": "正在生成双语字幕...",
+                        "subtitle_alignment": "正在对齐字幕时间轴...",
+                        "subtitle_burn": "正在烧录字幕...",
                         "completed": "视频生成已完成！"
                     }
                     message = step_message_map.get(step, "正在处理中...")
@@ -123,28 +94,32 @@ async def step3_generate_video(
                 goods_assets=standard_req.goods_assets,
                 goods_title=standard_req.goods_title,
                 goods_text=standard_req.goods_text,
+                llm_model=standard_req.llm_model,
                 source=standard_req.source,
                 tts_inference_mode=standard_req.tts_inference_mode,
                 ref_audio=standard_req.ref_audio,
+                subtitle_enabled=standard_req.subtitle_enabled,
+                subtitle_output=standard_req.subtitle_output,
+                subtitle_language=standard_req.subtitle_language,
                 progress_callback=on_progress,
             )
             
-            # Use a dummy request to build URL since we don't have the real request context in background task easily.
-            # We'll just build a relative URL and then fix it, or upload to S3 directly.
-            # Easiest way is to just assume default host or S3 will handle it.
-            fallback_url = f"/api/files/{Path(result.video_path).name}"
-            video_url = _upload_to_s3_if_available(result.video_path, fallback_url)
-            
-            # Clean up local task directory only after successful S3 upload
-            # (if video_url == fallback_url, S3 was not available — keep local files)
-            if video_url != fallback_url and result.task_dir:
-                from pixelle_video.utils.os_util import cleanup_task_dir
-                cleanup_task_dir(result.task_dir)
+            final_urls, local_urls = upload_outputs_to_s3_or_fallback(
+                request,
+                {
+                    "video": result.video_path,
+                    "subtitle": result.subtitle_path,
+                },
+            )
+            cleanup_after_uploads(final_urls, local_urls, result.task_dir)
             
             return {
-                "video_url": video_url,
+                "video_url": final_urls["video"],
                 "duration": result.duration,
-                "file_size": result.file_size
+                "file_size": result.file_size,
+                "subtitle_enabled": result.subtitle_enabled,
+                "subtitle_format": result.subtitle_format,
+                "subtitle_url": final_urls.get("subtitle"),
             }
             
         # Execute Background Task

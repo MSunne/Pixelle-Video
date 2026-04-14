@@ -2,7 +2,8 @@
 Digital Human Video Generation API schemas
 """
 
-from typing import Optional, List, Literal
+from typing import List, Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -78,6 +79,19 @@ class DigitalHumanVideoRequest(BaseModel):
         None,
         description="用于声音克隆的参考音频路径（可选）"
     )
+
+    subtitle_enabled: bool = Field(
+        True,
+        description="是否为数字人视频生成双语字幕并烧录到成片中"
+    )
+    subtitle_output: Literal["burned", "sidecar", "both"] = Field(
+        "both",
+        description="字幕输出方式: burned=仅硬字幕, sidecar=仅外挂字幕, both=硬字幕+SRT"
+    )
+    subtitle_language: Literal["zh", "zh_en", "source"] = Field(
+        "zh_en",
+        description="字幕语言: zh=仅中文, zh_en=中英双语, source=跟随原始输入语言"
+    )
     
     class Config:
         json_schema_extra = {
@@ -90,7 +104,10 @@ class DigitalHumanVideoRequest(BaseModel):
                         "goods_text": "大家好，今天给大家推荐一款超好用的智能保温杯...",
                         "source": "runninghub",
                         "tts_voice": "zh-CN-YunjianNeural",
-                        "tts_speed": 1.2
+                        "tts_speed": 1.2,
+                        "subtitle_enabled": True,
+                        "subtitle_output": "both",
+                        "subtitle_language": "zh_en"
                     }
                 },
                 {
@@ -103,7 +120,10 @@ class DigitalHumanVideoRequest(BaseModel):
                         "goods_text": "",
                         "source": "runninghub",
                         "tts_voice": "zh-CN-YunjianNeural",
-                        "tts_speed": 1.2
+                        "tts_speed": 1.2,
+                        "subtitle_enabled": True,
+                        "subtitle_output": "both",
+                        "subtitle_language": "zh_en"
                     }
                 }
             ]
@@ -117,6 +137,9 @@ class DigitalHumanVideoResponse(BaseModel):
     video_url: str = Field(..., description="生成的视频播放/下载地址")
     duration: float = Field(0.0, description="视频实际时长（秒）")
     file_size: int = Field(..., description="视频文件大小（字节）")
+    subtitle_enabled: bool = Field(False, description="是否启用了字幕生成")
+    subtitle_format: Optional[str] = Field(None, description="字幕格式，当前为 srt")
+    subtitle_url: Optional[str] = Field(None, description="外挂字幕文件地址（如果生成）")
 
 
 class DigitalHumanVideoAsyncResponse(BaseModel):

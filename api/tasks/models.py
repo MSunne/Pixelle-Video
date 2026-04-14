@@ -33,6 +33,9 @@ class TaskType(str, Enum):
     """Task type"""
     VIDEO_GENERATION = "video_generation"
     DIGITAL_HUMAN_VIDEO = "digital_human_video"
+    ASSET_BASED_VIDEO = "asset_based_video"
+    I2V_VIDEO = "i2v_video"
+    ACTION_TRANSFER_VIDEO = "action_transfer_video"
 
 
 class TaskProgress(BaseModel):

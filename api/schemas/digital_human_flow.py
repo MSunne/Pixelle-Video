@@ -1,7 +1,8 @@
 """
 Digital Human Flow API schemas for the guided step-by-step Swagger.
 """
-from typing import Optional, List, Literal
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -33,6 +34,9 @@ class Step3GenerateRequest(BaseModel):
     
     # TTS / 声音配置模块对应
     ref_audio: Optional[str] = Field(None, description="参考音频（对应前端上传的：参考音频。系统会自动克隆声音）")
+    subtitle_enabled: bool = Field(True, description="是否生成并烧录双语字幕")
+    subtitle_output: Literal["burned", "sidecar", "both"] = Field("both", description="字幕输出方式")
+    subtitle_language: Literal["zh", "zh_en", "source"] = Field("zh_en", description="字幕语言")
 
     class Config:
         json_schema_extra = {
@@ -46,7 +50,10 @@ class Step3GenerateRequest(BaseModel):
                         "goods_asset_path": "/path/to/uploads/dh_flow/goods.jpg",
                         "goods_text": "家人们，这款老廖牌香薰简直无敌了。",
                         "goods_title": "老廖牌香薰",
-                        "ref_audio": "/path/to/uploads/dh_flow/audio.m4a"
+                        "ref_audio": "/path/to/uploads/dh_flow/audio.m4a",
+                        "subtitle_enabled": True,
+                        "subtitle_output": "both",
+                        "subtitle_language": "zh_en"
                     }
                 },
                 {
@@ -58,7 +65,10 @@ class Step3GenerateRequest(BaseModel):
                         "goods_asset_path": None,
                         "goods_text": "今天和大家分享一个关于AI赋能的小技巧...",
                         "goods_title": None,
-                        "ref_audio": "/path/to/uploads/dh_flow/audio.m4a"
+                        "ref_audio": "/path/to/uploads/dh_flow/audio.m4a",
+                        "subtitle_enabled": True,
+                        "subtitle_output": "both",
+                        "subtitle_language": "zh_en"
                     }
                 }
             ]
