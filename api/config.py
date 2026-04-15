@@ -14,7 +14,9 @@
 API Configuration
 """
 
+import os
 from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -31,11 +33,17 @@ class APIConfig(BaseModel):
     cors_origins: list[str] = ["*"]
     
     # Task settings
-    max_concurrent_tasks: int = 5
-    task_cleanup_interval: int = 3600  # Clean completed tasks every hour
-    task_retention_time: int = 86400   # Keep task results for 24 hours
-    task_timeout: int = 1800           # Single task max runtime (30 minutes)
-    task_max_retries: int = 2          # Auto-retry count for retryable failures
+    max_concurrent_tasks: int = int(os.getenv("PIXELLE_API_MAX_CONCURRENT_TASKS", "5"))
+    task_cleanup_interval: int = int(os.getenv("PIXELLE_API_TASK_CLEANUP_INTERVAL", "3600"))
+    task_retention_time: int = int(os.getenv("PIXELLE_API_TASK_RETENTION_TIME", "86400"))
+    task_timeout: int = int(os.getenv("PIXELLE_API_TASK_TIMEOUT", "1800"))
+    task_max_retries: int = int(os.getenv("PIXELLE_API_TASK_MAX_RETRIES", "2"))
+    digital_human_max_concurrent_tasks: int = int(
+        os.getenv("PIXELLE_API_DIGITAL_HUMAN_MAX_CONCURRENT_TASKS", "1")
+    )
+    digital_human_max_active_tasks: int = int(
+        os.getenv("PIXELLE_API_DIGITAL_HUMAN_MAX_ACTIVE_TASKS", "2")
+    )
     
     # File upload settings
     max_upload_size: int = 100 * 1024 * 1024  # 100MB
@@ -49,4 +57,3 @@ class APIConfig(BaseModel):
 
 # Global config instance
 api_config = APIConfig()
-

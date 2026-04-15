@@ -21,7 +21,7 @@ class Step3GenerateRequest(BaseModel):
     source: Literal["runninghub", "selfhost"] = Field("runninghub", description="服务配置（对应前端的：服务配置），代表是使用云端还是本地 ComfyUI 执行流")
     
     mode: Literal["digital", "customize"] = Field(
-        "digital",
+        "customize",
         description="生成模式选择。"
                     "'digital' = 带货模式 (人物+商品图→AI生成带货视频); "
                     "'customize' = 口播模式 (人物图片+固定文案→数字人朗读视频)"

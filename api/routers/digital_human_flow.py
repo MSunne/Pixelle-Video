@@ -6,12 +6,14 @@ Provides a consolidated, linear Swagger experience.
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
+from api.config import api_config
 from api.dependencies import PixelleVideoDep
 from api.schemas.digital_human_flow import (
     Step3GenerateRequest,
     Step3GenerateResponse,
 )
 from api.tasks import Task, TaskType, task_manager
+from api.utils.digital_human_tasks import build_digital_human_request_fingerprint
 from api.utils.helpers import cleanup_after_uploads, upload_outputs_to_s3_or_fallback
 
 router = APIRouter()
@@ -52,11 +54,34 @@ async def step3_generate_video(
             subtitle_output=request_body.subtitle_output,
             subtitle_language=request_body.subtitle_language,
         )
+
+        fingerprint = build_digital_human_request_fingerprint(standard_req.model_dump())
+        existing_task = task_manager.find_active_task_by_fingerprint(
+            TaskType.DIGITAL_HUMAN_VIDEO,
+            fingerprint,
+        )
+        if existing_task:
+            logger.info(
+                "[Flow Gen] Reusing existing task {} for duplicate async request",
+                existing_task.task_id,
+            )
+            return Step3GenerateResponse(task_id=existing_task.task_id)
+
+        active_digital_human_tasks = task_manager.count_active_tasks(TaskType.DIGITAL_HUMAN_VIDEO)
+        if active_digital_human_tasks >= api_config.digital_human_max_active_tasks:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Digital human queue is busy. "
+                    "Please wait for current jobs to finish before submitting more."
+                ),
+            )
         
         # Create Task
         task = task_manager.create_task(
             task_type=TaskType.DIGITAL_HUMAN_VIDEO,
-            request_params=standard_req.model_dump()
+            request_params=standard_req.model_dump(),
+            request_fingerprint=fingerprint,
         )
         
         async def execute_digital_human_flow():
@@ -101,6 +126,7 @@ async def step3_generate_video(
                 subtitle_enabled=standard_req.subtitle_enabled,
                 subtitle_output=standard_req.subtitle_output,
                 subtitle_language=standard_req.subtitle_language,
+                task_id=task.task_id,
                 progress_callback=on_progress,
             )
             
@@ -130,6 +156,8 @@ async def step3_generate_video(
         
         return Step3GenerateResponse(task_id=task.task_id)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[Flow Gen] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

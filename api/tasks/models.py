@@ -17,6 +17,7 @@ Task data models
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -46,6 +47,20 @@ class TaskProgress(BaseModel):
     message: str = ""
 
 
+class DownstreamTask(BaseModel):
+    """Tracked downstream workflow invocation."""
+
+    provider: str = "runninghub"
+    step: str
+    workflow_id: Optional[str] = None
+    downstream_task_id: Optional[str] = None
+    attempt: int = 1
+    status: str = "created"
+    message: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class Task(BaseModel):
     """Task model"""
     task_id: str
@@ -66,9 +81,11 @@ class Task(BaseModel):
     
     # Request parameters (for reference)
     request_params: Optional[dict] = None
+    request_fingerprint: Optional[str] = None
+    cancel_requested: bool = False
+    downstream_tasks: list[DownstreamTask] = Field(default_factory=list)
     
     class Config:
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-

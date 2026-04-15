@@ -17,13 +17,20 @@ In-memory task management for video generation jobs.
 """
 
 import asyncio
+import contextvars
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable
+from typing import Callable, Dict, List, Optional
+
 from loguru import logger
 
-from api.tasks.models import Task, TaskStatus, TaskType, TaskProgress
 from api.config import api_config
+from api.tasks.models import DownstreamTask, Task, TaskProgress, TaskStatus, TaskType
+
+_current_task_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "pixelle_current_task_id",
+    default=None,
+)
 
 
 class TaskManager:
@@ -43,7 +50,6 @@ class TaskManager:
     # Error messages / exception substrings that indicate a transient failure
     # worth retrying (e.g. RunningHub rate limits, network hiccups).
     _RETRYABLE_PATTERNS = (
-        "TASK_QUEUE_MAXED",
         "timeout",
         "Timeout",
         "ConnectionError",
@@ -61,6 +67,7 @@ class TaskManager:
         self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
         self._semaphore: Optional[asyncio.Semaphore] = None
+        self._task_type_semaphores: Dict[TaskType, asyncio.Semaphore] = {}
     
     async def start(self):
         """Start task manager and cleanup scheduler"""
@@ -70,9 +77,16 @@ class TaskManager:
         
         self._running = True
         self._semaphore = asyncio.Semaphore(api_config.max_concurrent_tasks)
+        self._task_type_semaphores = {
+            TaskType.DIGITAL_HUMAN_VIDEO: asyncio.Semaphore(
+                api_config.digital_human_max_concurrent_tasks
+            )
+        }
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(f"✅ Task manager started (max_concurrent={api_config.max_concurrent_tasks}, "
-                     f"timeout={api_config.task_timeout}s, max_retries={api_config.task_max_retries})")
+                    f"digital_human_max_concurrent={api_config.digital_human_max_concurrent_tasks}, "
+                    f"digital_human_max_active={api_config.digital_human_max_active_tasks}, "
+                    f"timeout={api_config.task_timeout}s, max_retries={api_config.task_max_retries})")
     
     async def stop(self):
         """Stop task manager and cancel all tasks"""
@@ -99,7 +113,8 @@ class TaskManager:
     def create_task(
         self,
         task_type: TaskType,
-        request_params: Optional[dict] = None
+        request_params: Optional[dict] = None,
+        request_fingerprint: Optional[str] = None,
     ) -> Task:
         """
         Create a new task
@@ -117,6 +132,7 @@ class TaskManager:
             task_type=task_type,
             status=TaskStatus.PENDING,
             request_params=request_params,
+            request_fingerprint=request_fingerprint,
         )
         
         self._tasks[task_id] = task
@@ -125,6 +141,9 @@ class TaskManager:
     
     def _is_retryable(self, error: Exception) -> bool:
         """Check if an error is worth retrying"""
+        retryable_attr = getattr(error, "retryable", None)
+        if retryable_attr is not None:
+            return bool(retryable_attr)
         error_str = str(error)
         return any(pattern in error_str for pattern in self._RETRYABLE_PATTERNS)
     
@@ -154,10 +173,16 @@ class TaskManager:
         
         # Create async task
         async def _execute():
+            type_semaphore = self._task_type_semaphores.get(task.task_type)
             # Wait for a concurrency slot
             if self._semaphore:
                 logger.debug(f"Task {task_id} waiting for concurrency slot...")
                 await self._semaphore.acquire()
+            if type_semaphore:
+                logger.debug(f"Task {task_id} waiting for {task.task_type} slot...")
+                await type_semaphore.acquire()
+
+            token = _current_task_id_var.set(task_id)
             
             try:
                 task.status = TaskStatus.RUNNING
@@ -170,6 +195,8 @@ class TaskManager:
                 # Execute with retry and timeout
                 last_error = None
                 for attempt in range(max_retries + 1):
+                    if task.cancel_requested:
+                        raise asyncio.CancelledError()
                     try:
                         result = await asyncio.wait_for(
                             coro_func(*args, **kwargs),
@@ -195,6 +222,7 @@ class TaskManager:
                         
                     except asyncio.CancelledError:
                         task.status = TaskStatus.CANCELLED
+                        task.cancel_requested = True
                         task.completed_at = datetime.now()
                         logger.info(f"Task {task_id} cancelled")
                         return
@@ -231,6 +259,9 @@ class TaskManager:
                 # Release concurrency slot
                 if self._semaphore:
                     self._semaphore.release()
+                if type_semaphore:
+                    type_semaphore.release()
+                _current_task_id_var.reset(token)
         
         # Start execution
         future = asyncio.create_task(_execute())
@@ -309,6 +340,7 @@ class TaskManager:
         
         # Cancel future if running
         future = self._task_futures.get(task_id)
+        task.cancel_requested = True
         if future and not future.done():
             future.cancel()
         
@@ -317,6 +349,121 @@ class TaskManager:
         task.completed_at = datetime.now()
         logger.info(f"Cancelled task {task_id}")
         return True
+
+    def find_active_task_by_fingerprint(
+        self,
+        task_type: TaskType,
+        request_fingerprint: str,
+    ) -> Optional[Task]:
+        """Find an active task matching the same normalized request fingerprint."""
+        for task in self._tasks.values():
+            if task.task_type != task_type:
+                continue
+            if task.request_fingerprint != request_fingerprint:
+                continue
+            if task.cancel_requested:
+                continue
+            if task.status in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                return task
+        return None
+
+    def count_active_tasks(self, task_type: Optional[TaskType] = None) -> int:
+        """Count pending/running tasks, optionally filtered by task type."""
+        return sum(
+            1
+            for task in self._tasks.values()
+            if task.status in {TaskStatus.PENDING, TaskStatus.RUNNING}
+            and not task.cancel_requested
+            and (task_type is None or task.task_type == task_type)
+        )
+
+    def get_current_task_id(self) -> Optional[str]:
+        """Get the currently executing local task ID from context."""
+        return _current_task_id_var.get()
+
+    def get_current_task(self) -> Optional[Task]:
+        """Get the currently executing local task object from context."""
+        current_task_id = self.get_current_task_id()
+        if not current_task_id:
+            return None
+        return self.get_task(current_task_id)
+
+    def is_task_cancel_requested(self, task_id: Optional[str] = None) -> bool:
+        """Check whether the task has been marked for cancellation."""
+        resolved_task_id = task_id or self.get_current_task_id()
+        if not resolved_task_id:
+            return False
+        task = self._tasks.get(resolved_task_id)
+        return bool(task and task.cancel_requested)
+
+    def record_downstream_task(
+        self,
+        *,
+        step: str,
+        workflow_id: Optional[str] = None,
+        downstream_task_id: Optional[str] = None,
+        status: str,
+        message: Optional[str] = None,
+        provider: str = "runninghub",
+        task_id: Optional[str] = None,
+    ) -> Optional[DownstreamTask]:
+        """Create or update downstream execution trace for the current task."""
+        resolved_task_id = task_id or self.get_current_task_id()
+        if not resolved_task_id:
+            return None
+        task = self._tasks.get(resolved_task_id)
+        if not task:
+            return None
+
+        existing = None
+        if downstream_task_id:
+            existing = next(
+                (
+                    item
+                    for item in task.downstream_tasks
+                    if item.downstream_task_id == downstream_task_id
+                ),
+                None,
+            )
+
+        if existing is None and downstream_task_id is None and workflow_id:
+            existing = next(
+                (
+                    item
+                    for item in reversed(task.downstream_tasks)
+                    if item.step == step
+                    and item.workflow_id == workflow_id
+                    and item.downstream_task_id is None
+                ),
+                None,
+            )
+
+        if existing:
+            existing.status = status
+            existing.message = message
+            existing.updated_at = datetime.now()
+            if workflow_id:
+                existing.workflow_id = workflow_id
+            if downstream_task_id:
+                existing.downstream_task_id = downstream_task_id
+            return existing
+
+        attempt = 1 + sum(
+            1
+            for item in task.downstream_tasks
+            if item.step == step and item.workflow_id == workflow_id
+        )
+        entry = DownstreamTask(
+            provider=provider,
+            step=step,
+            workflow_id=workflow_id,
+            downstream_task_id=downstream_task_id,
+            attempt=attempt,
+            status=status,
+            message=message,
+        )
+        task.downstream_tasks.append(entry)
+        return entry
     
     async def _cleanup_loop(self):
         """Periodically clean up old completed tasks"""
@@ -359,8 +506,9 @@ class TaskManager:
         the video URL path segments or request parameters.
         """
         try:
-            from pixelle_video.utils.os_util import cleanup_task_dir, get_output_path
             from pathlib import Path
+
+            from pixelle_video.utils.os_util import cleanup_task_dir, get_output_path
             
             cleaned = False
             
@@ -394,4 +542,3 @@ class TaskManager:
 
 # Global task manager instance
 task_manager = TaskManager()
-

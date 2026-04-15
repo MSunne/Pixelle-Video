@@ -16,6 +16,7 @@ from typing import Callable, List, Optional
 import httpx
 from loguru import logger
 
+from pixelle_video.services.runninghub_execution import execute_runninghub_workflow
 from pixelle_video.services.tts_service import TTSResult
 from pixelle_video.utils.os_util import create_task_output_dir
 
@@ -63,6 +64,7 @@ class DigitalHumanPipeline:
         subtitle_output: str = "both",
         subtitle_language: str = "zh_en",
         progress_callback: ProgressCallback = None,
+        task_id: Optional[str] = None,
         **kwargs,
     ) -> DigitalHumanResult:
         self._progress_callback = progress_callback
@@ -78,7 +80,7 @@ class DigitalHumanPipeline:
         if subtitle_language not in {"zh", "zh_en", "source"}:
             raise ValueError("subtitle_language must be one of: zh, zh_en, source")
 
-        task_dir, task_id = create_task_output_dir()
+        task_dir, task_id = create_task_output_dir(task_id=task_id)
         logger.info(f"[DigitalHuman] Task directory: {task_dir}, mode: {mode}")
 
         workflow_paths = self._get_workflow_paths(source)
@@ -198,6 +200,7 @@ class DigitalHumanPipeline:
         tts_inference_mode: str,
         tts_workflow: Optional[str],
         ref_audio: Optional[str],
+        downstream_step: Optional[str] = None,
         source: str = "runninghub",
     ) -> TTSResult:
         tts_kwargs = {
@@ -219,12 +222,14 @@ class DigitalHumanPipeline:
                 )
             if ref_audio:
                 tts_kwargs["ref_audio"] = ref_audio
+        if downstream_step:
+            tts_kwargs["downstream_step"] = downstream_step
 
         result = await self.core.tts(**tts_kwargs)
         logger.info(f"[DigitalHuman] TTS generated: {audio_path}")
         return result
 
-    async def _execute_workflow(self, kit, workflow_path_str: str, params: dict):
+    async def _execute_workflow(self, kit, workflow_path_str: str, params: dict, *, step: str):
         workflow_path = Path(workflow_path_str)
         if not workflow_path.exists():
             raise FileNotFoundError(f"Workflow file does not exist: {workflow_path}")
@@ -233,11 +238,14 @@ class DigitalHumanPipeline:
             workflow_config = json.load(f)
 
         if workflow_config.get("source") == "runninghub" and "workflow_id" in workflow_config:
-            workflow_input = workflow_config["workflow_id"]
-        else:
-            workflow_input = str(workflow_config)
+            return await execute_runninghub_workflow(
+                kit=kit,
+                workflow_id=str(workflow_config["workflow_id"]),
+                params=params,
+                step=step,
+            )
 
-        return await kit.execute(workflow_input, params)
+        return await kit.execute(str(workflow_path), params)
 
     async def _extract_video_url(self, result) -> str:
         generated_video_url = None
@@ -291,6 +299,7 @@ class DigitalHumanPipeline:
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow,
             ref_audio=ref_audio,
+            downstream_step="tts",
             source=source,
         )
 
@@ -299,6 +308,7 @@ class DigitalHumanPipeline:
             kit,
             workflow_paths["second_workflow_path"],
             {"videoimage": character_image, "audio": audio_path},
+            step="video_synthesis",
         )
 
         video_url = await self._extract_video_url(second_result)
@@ -374,6 +384,7 @@ class DigitalHumanPipeline:
             kit,
             workflow_paths["third_workflow_path"],
             {"firstimage": character_image, "secondimage": goods_image},
+            step="combine_image",
         )
         if combine_result.status != "completed":
             raise RuntimeError(f"Image combination workflow failed: {combine_result.msg}")
@@ -390,6 +401,7 @@ class DigitalHumanPipeline:
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow,
             ref_audio=ref_audio,
+            downstream_step="tts",
             source=source,
         )
 
@@ -398,6 +410,7 @@ class DigitalHumanPipeline:
             kit,
             workflow_paths["second_workflow_path"],
             {"videoimage": generated_image_url, "audio": audio_path},
+            step="video_synthesis",
         )
 
         video_url = await self._extract_video_url(second_result)
@@ -427,6 +440,7 @@ class DigitalHumanPipeline:
             kit,
             workflow_paths["first_workflow_path"],
             {"firstimage": character_image, "secondimage": goods_image, "goodstype": goods_title},
+            step="synthesis",
         )
         if synthesis_result.status != "completed":
             raise RuntimeError(f"Synthesis workflow failed: {synthesis_result.msg}")
@@ -444,6 +458,7 @@ class DigitalHumanPipeline:
             tts_inference_mode=tts_inference_mode,
             tts_workflow=tts_workflow,
             ref_audio=ref_audio,
+            downstream_step="tts",
             source=source,
         )
 
@@ -452,6 +467,7 @@ class DigitalHumanPipeline:
             kit,
             workflow_paths["second_workflow_path"],
             {"videoimage": generated_image_url, "audio": audio_path},
+            step="video_synthesis",
         )
 
         video_url = await self._extract_video_url(second_result)

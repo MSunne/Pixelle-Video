@@ -22,6 +22,7 @@ from typing import Optional
 from loguru import logger
 
 from pixelle_video.services.comfy_base_service import ComfyBaseService
+from pixelle_video.services.runninghub_execution import execute_runninghub_workflow
 from pixelle_video.tts_voices import speed_to_rate
 from pixelle_video.utils.tts_util import edge_tts, edge_tts_with_boundaries
 
@@ -101,6 +102,7 @@ class TTSService(ComfyBaseService):
         # Output path
         output_path: Optional[str] = None,
         return_result: bool = False,
+        downstream_step: Optional[str] = None,
         **params
     ) -> str | TTSResult:
         """
@@ -162,6 +164,7 @@ class TTSService(ComfyBaseService):
                 speed=speed,
                 output_path=output_path,
                 return_result=return_result,
+                downstream_step=downstream_step,
                 **params
             )
     
@@ -248,6 +251,7 @@ class TTSService(ComfyBaseService):
         speed: float = 1.0,
         output_path: Optional[str] = None,
         return_result: bool = False,
+        downstream_step: Optional[str] = None,
         **params
     ) -> str | TTSResult:
         """
@@ -297,7 +301,15 @@ class TTSService(ComfyBaseService):
                 workflow_input = workflow_info["path"]
                 logger.info(f"Executing selfhost TTS workflow: {workflow_input}")
             
-            result = await kit.execute(workflow_input, workflow_params)
+            if workflow_info["source"] == "runninghub" and "workflow_id" in workflow_info:
+                result = await execute_runninghub_workflow(
+                    kit=kit,
+                    workflow_id=str(workflow_info["workflow_id"]),
+                    params=workflow_params,
+                    step=downstream_step or "tts",
+                )
+            else:
+                result = await kit.execute(workflow_input, workflow_params)
             
             # 4. Handle result
             if result.status != "completed":
