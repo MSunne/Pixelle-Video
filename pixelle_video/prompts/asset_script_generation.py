@@ -16,6 +16,7 @@ Asset-based video script generation prompt
 For generating video scripts based on user-provided assets.
 """
 
+import json
 
 ASSET_SCRIPT_GENERATION_PROMPT = """You are a professional video script creator. Based on the user's video intent and available assets, generate a {duration}-second video script. Before doing so, you need to detect the user's input language - if it's English, then all copy must be in English. Strictly follow the user's input language type as the standard, ensuring consistent and corresponding copy!
 
@@ -51,6 +52,36 @@ Provide for each scene:
 Now please begin generating the video script:"""
 
 
+SCRIPT_ASSET_MAPPING_PROMPT = """You are a video editor. Your only job is to assign the user's existing script segments to the most suitable uploaded assets.
+
+## Non-Negotiable Rules
+1. Do not rewrite, polish, expand, shorten, or translate the script
+2. The `narration` field for each scene must be copied exactly from the provided script segment
+3. Use one asset per scene
+4. Assets may be reused when needed
+5. Prefer spreading usage across assets when several assets are suitable
+6. Always use exact asset paths from the asset list
+
+## Video Context
+{title_section}{script_intro}
+
+## Script Segments (must stay unchanged)
+{script_segments_text}
+
+## Available Assets (use exact paths in output)
+{assets_text}
+
+## Output Requirements
+Return one scene for each script segment, in the same order:
+- scene_number: Scene number starting from 1
+- asset_path: Exact path selected from available assets list
+- narration: Exact original script segment text
+
+Do not skip any segment. Do not merge segments. Do not change the narration text.
+
+Now assign the assets:"""
+
+
 def build_asset_script_prompt(
     intent: str,
     duration: int,
@@ -78,4 +109,25 @@ def build_asset_script_prompt(
         intent=intent,
         assets_text=assets_text,
         title_instruction=title_instruction
+    )
+
+
+def build_script_asset_mapping_prompt(
+    script_segments: list[str],
+    assets_text: str,
+    title: str = ""
+) -> str:
+    """Build a prompt for mapping fixed script segments to uploaded assets."""
+    title_section = f"- Video Title: {title}\n" if title else ""
+    script_intro = "Map each script segment to the best matching asset.\n"
+    script_segments_text = "\n".join(
+        f"- scene_number: {idx}\n  narration: {json.dumps(segment, ensure_ascii=False)}"
+        for idx, segment in enumerate(script_segments, start=1)
+    )
+
+    return SCRIPT_ASSET_MAPPING_PROMPT.format(
+        title_section=title_section,
+        script_intro=script_intro,
+        script_segments_text=script_segments_text,
+        assets_text=assets_text,
     )

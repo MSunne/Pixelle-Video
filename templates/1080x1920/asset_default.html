@@ -112,13 +112,31 @@
             margin-bottom: 60px;
         }
 
-        .text {
+        .subtitle-zh {
             font-size: 52px;
             font-weight: 500;
-            line-height: 1.6;
+            line-height: 1.45;
             text-align: center;
+            word-break: break-word;
+            overflow-wrap: anywhere;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
             backdrop-filter: blur(4px);
+        }
+
+        .subtitle-en {
+            margin-top: 18px;
+            font-size: 34px;
+            font-weight: 400;
+            line-height: 1.45;
+            text-align: center;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            color: rgba(255, 255, 255, 0.92);
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+        }
+
+        .subtitle-en:empty {
+            display: none;
         }
     </style>
 </head>
@@ -148,7 +166,8 @@
 
             <!-- Bottom Section: Narration/Text -->
             <div class="subtitle-wrapper">
-                <div class="text">{{text}}</div>
+                <div class="subtitle-zh">{{subtitle_zh}}</div>
+                <div class="subtitle-en">{{subtitle_en}}</div>
             </div>
         </div>
     </div>

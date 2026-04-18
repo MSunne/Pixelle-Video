@@ -16,23 +16,23 @@ Pipeline UI Package
 Exports registry functions and automatically registers available pipelines.
 """
 
+# Import all pipeline UI modules to ensure they register themselves
+from web.pipelines import action_transfer as _action_transfer  # noqa: F401
+from web.pipelines import asset_based as _asset_based  # noqa: F401
+from web.pipelines import custom_script_assets as _custom_script_assets  # noqa: F401
+from web.pipelines import digital_human as _digital_human  # noqa: F401
+from web.pipelines import i2v as _i2v  # noqa: F401
+from web.pipelines import standard as _standard  # noqa: F401
 from web.pipelines.base import (
     PipelineUI,
-    register_pipeline_ui,
+    get_all_pipeline_uis,
     get_pipeline_ui,
-    get_all_pipeline_uis
+    register_pipeline_ui,
 )
-
-# Import all pipeline UI modules to ensure they register themselves
-from web.pipelines import standard
-from web.pipelines import asset_based
-from web.pipelines import digital_human
-from web.pipelines import i2v
-from web.pipelines import action_transfer
 
 __all__ = [
     "PipelineUI",
-    "register_pipeline_ui",
+    "get_all_pipeline_uis",
     "get_pipeline_ui",
-    "get_all_pipeline_uis"
+    "register_pipeline_ui",
 ]

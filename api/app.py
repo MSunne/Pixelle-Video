@@ -50,6 +50,7 @@ from api.routers import (
     image_router,
     content_router,
     video_router,
+    asset_based_router,
     tasks_router,
     files_router,
     resources_router,
@@ -94,6 +95,7 @@ app = FastAPI(
     - 🎨 **Image**: AI 图像生成驱动
     - 📝 **Content**: 自动化文案与内容生成
     - 🎬 **Video**: 端到端视频合成与生成
+    - 📦 **自定义素材视频**: 上传图片/视频素材，生成带中英字幕的视频
     - 🧑 **数字人视频**: 口播模式（朗读文案） / 带货模式（商品图→AI带货视频）
     
     ### 🧑 数字人视频（推荐）
@@ -143,6 +145,7 @@ app.include_router(tts_router, prefix=api_config.api_prefix)
 app.include_router(image_router, prefix=api_config.api_prefix)
 app.include_router(content_router, prefix=api_config.api_prefix)
 app.include_router(video_router, prefix=api_config.api_prefix)
+app.include_router(asset_based_router, prefix=api_config.api_prefix)
 app.include_router(digital_human_router, prefix=api_config.api_prefix)
 app.include_router(digital_human_flow_router, prefix=api_config.api_prefix)
 app.include_router(i2v_router, prefix=api_config.api_prefix)
@@ -171,6 +174,7 @@ async def root():
             "image": f"{api_config.api_prefix}/image",
             "content": f"{api_config.api_prefix}/content",
             "video": f"{api_config.api_prefix}/video",
+            "asset_video": f"{api_config.api_prefix}/asset-video",
             "tasks": f"{api_config.api_prefix}/tasks",
             "files": f"{api_config.api_prefix}/files",
             "resources": f"{api_config.api_prefix}/resources",
@@ -214,5 +218,4 @@ Press Ctrl+C to stop the server
         proxy_headers=True,
         forwarded_allow_ips="*",
     )
-
 

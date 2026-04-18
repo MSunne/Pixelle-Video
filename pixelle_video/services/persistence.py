@@ -415,6 +415,8 @@ class PersistenceService:
             "index": frame.index,
             "narration": frame.narration,
             "image_prompt": frame.image_prompt,
+            "subtitle_zh": frame.subtitle_zh,
+            "subtitle_en": frame.subtitle_en,
             "audio_path": frame.audio_path,
             "media_type": frame.media_type,
             "image_path": frame.image_path,
@@ -431,6 +433,8 @@ class PersistenceService:
             index=data["index"],
             narration=data["narration"],
             image_prompt=data["image_prompt"],
+            subtitle_zh=data.get("subtitle_zh"),
+            subtitle_en=data.get("subtitle_en"),
             audio_path=data.get("audio_path"),
             media_type=data.get("media_type"),
             image_path=data.get("image_path"),
@@ -709,4 +713,3 @@ class PersistenceService:
         except Exception as e:
             logger.error(f"Failed to delete task {task_id}: {e}")
             return False
-

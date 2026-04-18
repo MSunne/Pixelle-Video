@@ -307,6 +307,8 @@ class FrameProcessor:
         # Build ext data
         ext = {
             "index": frame.index + 1,
+            "subtitle_zh": frame.subtitle_zh or frame.narration,
+            "subtitle_en": frame.subtitle_en or "",
         }
         
         # Add custom template parameters
@@ -444,4 +446,3 @@ class FrameProcessor:
             logger.warning(f"Failed to get video duration: {e}, using audio duration")
             # Fallback: use audio duration if available
             return 1.0  # Default to 1 second if unable to determine
-

@@ -20,6 +20,7 @@ from api.routers.tts import router as tts_router
 from api.routers.image import router as image_router
 from api.routers.content import router as content_router
 from api.routers.video import router as video_router
+from api.routers.asset_based import router as asset_based_router
 from api.routers.tasks import router as tasks_router
 from api.routers.files import router as files_router
 from api.routers.resources import router as resources_router
@@ -36,6 +37,7 @@ __all__ = [
     "image_router",
     "content_router",
     "video_router",
+    "asset_based_router",
     "tasks_router",
     "files_router",
     "resources_router",
@@ -45,4 +47,3 @@ __all__ = [
     "i2v_router",
     "action_transfer_router",
 ]
-

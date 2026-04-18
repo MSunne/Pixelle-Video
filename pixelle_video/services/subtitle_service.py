@@ -241,6 +241,21 @@ class SubtitleService:
             pieces.append(current)
         return pieces
 
+    async def translate_cues(
+        self,
+        cue_texts: list[str],
+        llm_model: Optional[str] = None,
+        subtitle_language: str = "zh_en",
+    ) -> list[str]:
+        """Translate cue text for lightweight bilingual subtitle rendering."""
+        if not cue_texts:
+            return []
+        return await self._build_translations(
+            cue_texts,
+            subtitle_language=subtitle_language,
+            llm_model=llm_model,
+        )
+
     async def _build_translations(
         self,
         cue_texts: list[str],

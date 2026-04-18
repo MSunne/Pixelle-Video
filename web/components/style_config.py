@@ -26,7 +26,7 @@ from web.utils.streamlit_helpers import check_and_warn_selfhost_workflow
 from pixelle_video.config import config_manager
 
 
-def render_style_config(pixelle_video):
+def render_style_config(pixelle_video, key_prefix="style_"):
     """Render style configuration section (middle column)"""
     # TTS Section (moved from left column)
     # ====================================================================
@@ -50,7 +50,7 @@ def render_style_config(pixelle_video):
             horizontal=True,
             format_func=lambda x: tr(f"tts.mode.{x}"),
             index=0 if tts_config.get("inference_mode", "local") == "local" else 1,
-            key="tts_inference_mode"
+            key=f"{key_prefix}tts_inference_mode"
         )
         
         # Show hint based on mode
@@ -95,7 +95,7 @@ def render_style_config(pixelle_video):
                     tr("tts.voice_selector"),
                     voice_options,
                     index=default_voice_index,
-                    key="tts_local_voice"
+                    key=f"{key_prefix}tts_local_voice"
                 )
                 
                 # Get actual voice ID
@@ -111,7 +111,7 @@ def render_style_config(pixelle_video):
                     value=saved_speed,
                     step=0.1,
                     format="%.1fx",
-                    key="tts_local_speed"
+                    key=f"{key_prefix}tts_local_speed"
                 )
                 st.caption(tr("tts.speed_label", speed=f"{tts_speed:.1f}"))
             
@@ -141,7 +141,7 @@ def render_style_config(pixelle_video):
                 tts_workflow_options if tts_workflow_options else ["No TTS workflows found"],
                 index=default_tts_index,
                 label_visibility="collapsed",
-                key="tts_workflow_select"
+                key=f"{key_prefix}tts_workflow_select"
             )
             
             # Get the actual workflow key
@@ -159,7 +159,7 @@ def render_style_config(pixelle_video):
                 tr("tts.ref_audio"),
                 type=["mp3", "wav", "flac", "m4a", "aac", "ogg"],
                 help=tr("tts.ref_audio_help"),
-                key="ref_audio_upload"
+                key=f"{key_prefix}ref_audio_upload"
             )
             
             # Save uploaded ref_audio to temp file if provided
@@ -188,11 +188,11 @@ def render_style_config(pixelle_video):
                 tr("tts.preview_text"),
                 value="大家好，这是一段测试语音。",
                 placeholder=tr("tts.preview_text_placeholder"),
-                key="tts_preview_text"
+                key=f"{key_prefix}tts_preview_text"
             )
             
             # Preview button
-            if st.button(tr("tts.preview_button"), key="preview_tts", use_container_width=True):
+            if st.button(tr("tts.preview_button"), key=f"{key_prefix}preview_tts", use_container_width=True):
                 with st.spinner(tr("tts.previewing")):
                     try:
                         # Build TTS params based on mode

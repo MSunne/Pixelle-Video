@@ -9,18 +9,18 @@ Results are uploaded to S3 when available, with local cleanup to save disk space
 """
 
 import os
+
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
 from api.dependencies import PixelleVideoDep
 from api.schemas.asset_based import (
+    AssetBasedVideoAsyncResponse,
     AssetBasedVideoRequest,
     AssetBasedVideoResponse,
-    AssetBasedVideoAsyncResponse,
 )
-from api.tasks import task_manager, TaskType
-from api.utils.helpers import path_to_url, upload_to_s3_or_fallback, cleanup_after_upload
-
+from api.tasks import TaskType, task_manager
+from api.utils.helpers import cleanup_after_upload, path_to_url, upload_to_s3_or_fallback
 
 router = APIRouter(prefix="/asset-video", tags=["自定义素材视频生成"])
 
@@ -36,6 +36,9 @@ async def generate_asset_video_sync(
     
     使用用户上传的素材（图片/视频），结合 AI 生成的旁白和脚本，
     自动编排场景并生成最终视频。
+
+    支持本地 Edge TTS 和参考语音克隆两种配音方式，
+    输出视频默认带中英对照画面字幕。
     
     **注意**：对于复杂的视频，生成可能需要几分钟时间。
     推荐使用 `/generate/async` 接口来进行长时间运行的异步生成。
@@ -60,10 +63,17 @@ async def generate_asset_video_sync(
             assets=request_body.assets,
             video_title=request_body.video_title,
             intent=request_body.intent,
+            content_mode=request_body.content_mode,
+            script_text=request_body.script_text,
+            script_split_mode=request_body.script_split_mode,
             duration=request_body.duration,
             source=request_body.source,
-            voice_id=request_body.voice_id,
+            tts_inference_mode=request_body.tts_inference_mode,
+            tts_voice=request_body.tts_voice,
+            tts_workflow=request_body.tts_workflow,
             tts_speed=request_body.tts_speed,
+            ref_audio=request_body.ref_audio,
+            voice_id=request_body.voice_id,
             bgm_path=request_body.bgm_path,
             bgm_volume=request_body.bgm_volume,
             bgm_mode=request_body.bgm_mode,
@@ -87,7 +97,10 @@ async def generate_asset_video_sync(
             duration=duration,
             file_size=file_size
         )
-        
+
+    except ValueError as e:
+        logger.error(f"[AssetVideo] Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"[AssetVideo] Sync generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -104,6 +117,9 @@ async def generate_asset_video_async(
     
     创建一个后台任务用于视频生成。
     立即返回 `task_id`，用于后续跟踪任务进度。
+
+    支持本地 Edge TTS 和参考语音克隆两种配音方式，
+    输出视频默认带中英对照画面字幕。
     
     **工作流：**
     1. 通过 `/api/files` 接口上传素材
@@ -141,10 +157,17 @@ async def generate_asset_video_async(
                 assets=request_body.assets,
                 video_title=request_body.video_title,
                 intent=request_body.intent,
+                content_mode=request_body.content_mode,
+                script_text=request_body.script_text,
+                script_split_mode=request_body.script_split_mode,
                 duration=request_body.duration,
                 source=request_body.source,
-                voice_id=request_body.voice_id,
+                tts_inference_mode=request_body.tts_inference_mode,
+                tts_voice=request_body.tts_voice,
+                tts_workflow=request_body.tts_workflow,
                 tts_speed=request_body.tts_speed,
+                ref_audio=request_body.ref_audio,
+                voice_id=request_body.voice_id,
                 bgm_path=request_body.bgm_path,
                 bgm_volume=request_body.bgm_volume,
                 bgm_mode=request_body.bgm_mode,
@@ -177,7 +200,10 @@ async def generate_asset_video_async(
         return AssetBasedVideoAsyncResponse(
             task_id=task.task_id
         )
-        
+
+    except ValueError as e:
+        logger.error(f"[AssetVideo] Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"[AssetVideo] Async generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

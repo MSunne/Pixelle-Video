@@ -60,6 +60,8 @@ class StoryboardFrame:
     index: int                                 # Frame index (0-based)
     narration: str                             # Narration text
     image_prompt: str                          # Image generation prompt (can be None for text-only or video)
+    subtitle_zh: Optional[str] = None          # Chinese subtitle text for frame rendering
+    subtitle_en: Optional[str] = None          # English subtitle text for frame rendering
     
     # Generated resource paths
     audio_path: Optional[str] = None           # Audio file path (narration)
@@ -140,4 +142,3 @@ class VideoGenerationResult:
     duration: float                            # Total duration
     file_size: int                             # File size (bytes)
     created_at: datetime = field(default_factory=datetime.now)
-

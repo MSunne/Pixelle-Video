@@ -32,17 +32,18 @@ Example:
     )
 """
 
-from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from pixelle_video.pipelines.linear import LinearVideoPipeline, PipelineContext
 from pixelle_video.models.progress import ProgressEvent
+from pixelle_video.pipelines.linear import LinearVideoPipeline, PipelineContext
+from pixelle_video.utils.content_generators import generate_title, split_narration_script
 from pixelle_video.utils.os_util import (
     create_task_output_dir,
-    get_task_final_video_path
+    get_task_final_video_path,
 )
 
 # Type alias for progress callback
@@ -64,6 +65,18 @@ class VideoScript(BaseModel):
     scenes: List[SceneScript] = Field(description="List of scenes in the video")
 
 
+class ScriptSceneMapping(BaseModel):
+    """Fixed script segment mapped to a single asset."""
+    scene_number: int = Field(description="Scene number starting from 1")
+    asset_path: str = Field(description="Path to the asset file for this scene")
+    narration: str = Field(description="Exact original narration segment text")
+
+
+class ScriptAssetMapping(BaseModel):
+    """All fixed script segments mapped to assets."""
+    scenes: List[ScriptSceneMapping] = Field(description="List of script-to-asset mappings")
+
+
 class AssetBasedPipeline(LinearVideoPipeline):
     """
     Asset-Based Video Pipeline
@@ -80,12 +93,16 @@ class AssetBasedPipeline(LinearVideoPipeline):
         """
         super().__init__(core)
         self.asset_index: Dict[str, Any] = {}  # In-memory asset metadata
+        self._progress_callback: ProgressCallback = None
     
     async def __call__(
         self,
         assets: List[str],
         video_title: str = "",
         intent: Optional[str] = None,
+        content_mode: str = "intent",
+        script_text: Optional[str] = None,
+        script_split_mode: str = "paragraph",
         duration: int = 30,
         source: str = "runninghub",
         bgm_path: Optional[str] = None,
@@ -118,12 +135,17 @@ class AssetBasedPipeline(LinearVideoPipeline):
         self._progress_callback = progress_callback
         
         # Create custom context with asset-specific parameters
+        input_text = script_text if content_mode == "script" else (intent or video_title)
+
         ctx = PipelineContext(
-            input_text=intent or video_title,  # Use intent or title as input_text
+            input_text=input_text or video_title,
             params={
                 "assets": assets,
                 "video_title": video_title,
                 "intent": intent or video_title,
+                "content_mode": content_mode,
+                "script_text": script_text,
+                "script_split_mode": script_split_mode,
                 "duration": duration,
                 "source": source,
                 "bgm_path": bgm_path,
@@ -277,7 +299,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
     
     async def determine_title(self, context: PipelineContext) -> PipelineContext:
         """
-        Use user-provided title if available, otherwise leave empty
+        Use user-provided title if available, otherwise auto-generate for script mode
         
         Args:
             context: Pipeline context
@@ -290,9 +312,13 @@ class AssetBasedPipeline(LinearVideoPipeline):
         if title:
             context.title = title
             logger.info(f"📝 Video title: {title} (user-specified)")
+        elif context.request.get("content_mode", "intent") == "script":
+            llm = self._get_llm_for_params(context.params)
+            context.title = await generate_title(llm, context.input_text, strategy="llm")
+            logger.info(f"📝 Video title: {context.title} (generated from script)")
         else:
             context.title = ""
-            logger.info(f"📝 No video title specified (will be hidden in template)")
+            logger.info("📝 No video title specified (will be hidden in template)")
         
         return context
     
@@ -308,8 +334,12 @@ class AssetBasedPipeline(LinearVideoPipeline):
         Returns:
             Updated context with generated script (scenes already have asset_path assigned)
         """
+        content_mode = context.request.get("content_mode", "intent")
+        if content_mode == "script":
+            return await self._generate_fixed_script_mapping(context)
+
         from pixelle_video.prompts.asset_script_generation import build_asset_script_prompt
-        
+
         logger.info("🤖 Generating video script with LLM...")
         
         # Emit progress for script generation (15% - 25%)
@@ -319,7 +349,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
         ))
         
         # Build prompt for LLM
-        intent = context.request.get("intent", context.input_text)
+        intent = context.request.get("intent") or context.input_text
         duration = context.request.get("duration", 30)
         title = context.title  # May be empty if user didn't provide one
         
@@ -352,22 +382,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
         
         # Validate asset paths exist
         for scene in context.script:
-            asset_path = scene.get("asset_path")
-            if asset_path not in self.asset_index:
-                # Find closest match (in case LLM slightly modified the path)
-                matched = False
-                for known_path in self.asset_index.keys():
-                    if Path(known_path).name == Path(asset_path).name:
-                        scene["asset_path"] = known_path
-                        matched = True
-                        logger.warning(f"Corrected asset path: {asset_path} -> {known_path}")
-                        break
-                
-                if not matched:
-                    # Fallback to first available asset
-                    fallback_path = list(self.asset_index.keys())[0]
-                    logger.warning(f"Unknown asset path '{asset_path}', using fallback: {fallback_path}")
-                    scene["asset_path"] = fallback_path
+            scene["asset_path"] = self._normalize_asset_path(scene.get("asset_path", ""))
         
         logger.success(f"✅ Generated script with {len(context.script)} scenes")
         
@@ -387,6 +402,59 @@ class AssetBasedPipeline(LinearVideoPipeline):
             asset_name = Path(scene.get("asset_path", "unknown")).name
             logger.info(f"Scene {scene['scene_number']} [{asset_name}]: {narration_preview}")
         
+        return context
+
+    async def _generate_fixed_script_mapping(self, context: PipelineContext) -> PipelineContext:
+        """Split fixed user script and map each segment to the best matching asset."""
+        from pixelle_video.prompts.asset_script_generation import build_script_asset_mapping_prompt
+
+        logger.info("📝 Splitting fixed script and matching assets...")
+
+        self._emit_progress(ProgressEvent(
+            event_type="generating_script",
+            progress=0.16
+        ))
+
+        split_mode = context.request.get("script_split_mode", "paragraph")
+        script_text = context.request.get("script_text") or context.input_text
+        script_segments = await split_narration_script(script_text, split_mode=split_mode)
+        if not script_segments:
+            raise ValueError("No usable script segments were produced from script_text")
+
+        asset_info = []
+        for asset_path, metadata in self.asset_index.items():
+            asset_info.append(f"- Path: {asset_path}\n  Description: {metadata['description']}")
+        assets_text = "\n".join(asset_info)
+
+        prompt = build_script_asset_mapping_prompt(
+            script_segments=script_segments,
+            assets_text=assets_text,
+            title=context.title or "",
+        )
+
+        llm = self._get_llm_for_params(context.params)
+        mapping: ScriptAssetMapping = await llm(
+            prompt=prompt,
+            response_type=ScriptAssetMapping,
+            temperature=0.2,
+            max_tokens=4000,
+        )
+
+        context.script = self._build_fixed_script_scenes(script_segments, mapping)
+
+        logger.success(f"✅ Matched {len(context.script)} fixed script segments to assets")
+
+        self._emit_progress(ProgressEvent(
+            event_type="generating_script",
+            progress=0.25,
+            extra_info="complete"
+        ))
+
+        for scene in context.script:
+            asset_name = Path(scene.get("asset_path", "unknown")).name
+            narration_preview = scene["narrations"][0][:40]
+            logger.info(f"Scene {scene['scene_number']} [{asset_name}]: {narration_preview}")
+
         return context
     
     async def plan_visuals(self, context: PipelineContext) -> PipelineContext:
@@ -420,12 +488,106 @@ class AssetBasedPipeline(LinearVideoPipeline):
             asset = scene["matched_asset"]
             asset_usage[asset] = asset_usage.get(asset, 0) + 1
         
-        logger.info(f"📊 Asset usage summary:")
+        logger.info("📊 Asset usage summary:")
         for asset_path, count in asset_usage.items():
             logger.info(f"   {Path(asset_path).name}: {count} scene(s)")
         
         return context
-    
+
+    def _normalize_asset_path(self, asset_path: str) -> str:
+        """Resolve LLM-selected asset path against known assets."""
+        if asset_path in self.asset_index:
+            return asset_path
+
+        for known_path in self.asset_index.keys():
+            if Path(known_path).name == Path(asset_path).name:
+                logger.warning(f"Corrected asset path: {asset_path} -> {known_path}")
+                return known_path
+
+        fallback_path = list(self.asset_index.keys())[0]
+        logger.warning(f"Unknown asset path '{asset_path}', using fallback: {fallback_path}")
+        return fallback_path
+
+    def _build_fixed_script_scenes(
+        self,
+        script_segments: List[str],
+        mapping: ScriptAssetMapping,
+    ) -> List[Dict[str, Any]]:
+        """Build downstream scene payloads while preserving the user's exact script."""
+        if not self.asset_index:
+            raise ValueError("No analyzed assets available for fixed script mapping")
+
+        mapped_by_scene = {scene.scene_number: scene for scene in mapping.scenes}
+        if len(mapped_by_scene) != len(script_segments):
+            logger.warning(
+                "Fixed script mapping count mismatch: expected {}, got {}",
+                len(script_segments),
+                len(mapped_by_scene),
+            )
+
+        fallback_assets = list(self.asset_index.keys())
+        scenes: List[Dict[str, Any]] = []
+        for idx, segment in enumerate(script_segments, start=1):
+            mapped_scene = mapped_by_scene.get(idx)
+            if mapped_scene is None:
+                asset_path = fallback_assets[(idx - 1) % len(fallback_assets)]
+                logger.warning(
+                    f"Missing asset mapping for scene {idx}, using fallback asset: {asset_path}"
+                )
+            else:
+                asset_path = self._normalize_asset_path(mapped_scene.asset_path)
+                if mapped_scene.narration.strip() != segment.strip():
+                    logger.warning(
+                        f"Scene {idx} narration was altered by LLM mapping; preserving original text"
+                    )
+
+            scenes.append(
+                {
+                    "scene_number": idx,
+                    "asset_path": asset_path,
+                    "narrations": [segment],
+                    "duration": 0,
+                }
+            )
+
+        return scenes
+
+    def _resolve_tts_config(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Normalize legacy and new TTS parameters for asset-based generation."""
+        tts_inference_mode = params.get("tts_inference_mode")
+        if tts_inference_mode not in {"local", "comfyui"}:
+            tts_inference_mode = "comfyui" if params.get("ref_audio") else "local"
+
+        final_voice_id = None
+        final_tts_workflow = params.get("tts_workflow")
+
+        if tts_inference_mode == "local":
+            final_voice_id = (
+                params.get("tts_voice")
+                or params.get("voice_id")
+                or "zh-CN-YunjianNeural"
+            )
+            final_tts_workflow = None
+            logger.debug(f"TTS Mode: local (voice={final_voice_id})")
+        else:
+            if params.get("ref_audio") and (
+                not final_tts_workflow or final_tts_workflow.endswith("/tts_index2.json")
+            ):
+                source = params.get("source", "runninghub")
+                final_tts_workflow = f"{source}/tts_index2.json"
+                logger.info(
+                    f"[AssetBased] Auto-selected Index TTS for voice cloning: {final_tts_workflow}"
+                )
+            logger.debug(f"TTS Mode: comfyui (workflow={final_tts_workflow})")
+
+        return {
+            "tts_inference_mode": tts_inference_mode,
+            "voice_id": final_voice_id,
+            "tts_workflow": final_tts_workflow,
+            "tts_speed": params.get("tts_speed", 1.2),
+            "ref_audio": params.get("ref_audio"),
+        }
+
     async def initialize_storyboard(self, context: PipelineContext) -> PipelineContext:
         """
         Initialize storyboard from matched scenes
@@ -436,12 +598,9 @@ class AssetBasedPipeline(LinearVideoPipeline):
         Returns:
             Updated context with storyboard
         """
-        from pixelle_video.models.storyboard import (
-            Storyboard,
-            StoryboardFrame, 
-            StoryboardConfig
-        )
         from datetime import datetime
+
+        from pixelle_video.models.storyboard import Storyboard, StoryboardConfig, StoryboardFrame
         
         # Extract all narrations in order for compatibility
         all_narrations = []
@@ -462,11 +621,25 @@ class AssetBasedPipeline(LinearVideoPipeline):
             dims = template_name.split("/")[0].split("x")
             media_width = int(dims[0])
             media_height = int(dims[1])
-        except:
+        except Exception:
             # Default to 1080x1920
             media_width = 1080
             media_height = 1920
         
+        tts_config = self._resolve_tts_config(context.params)
+
+        frame_narrations: list[str] = []
+        for scene in context.matched_scenes:
+            narrations = scene.get("narrations", [scene.get("narration", "")])
+            if isinstance(narrations, str):
+                narrations = [narrations]
+            frame_narrations.append(" ".join(narrations))
+
+        frame_translations = await self.core.subtitle.translate_cues(
+            frame_narrations,
+            llm_model=context.params.get("llm_model"),
+        )
+
         # Create StoryboardConfig
         context.config = StoryboardConfig(
             task_id=context.task_id,
@@ -474,9 +647,11 @@ class AssetBasedPipeline(LinearVideoPipeline):
             min_narration_words=5,
             max_narration_words=50,
             video_fps=30,
-            tts_inference_mode="local",
-            voice_id=context.params.get("voice_id", "zh-CN-YunjianNeural"),
-            tts_speed=context.params.get("tts_speed", 1.2),
+            tts_inference_mode=tts_config["tts_inference_mode"],
+            voice_id=tts_config["voice_id"],
+            tts_workflow=tts_config["tts_workflow"],
+            tts_speed=tts_config["tts_speed"],
+            ref_audio=tts_config["ref_audio"],
             media_width=media_width,
             media_height=media_height,
             frame_template=template_name,
@@ -499,12 +674,14 @@ class AssetBasedPipeline(LinearVideoPipeline):
             
             # Use first narration as the main text (for subtitle)
             # We'll combine all narrations in the audio
-            main_narration = " ".join(narrations)  # Combine for subtitle display
+            main_narration = frame_narrations[i]
             
             frame = StoryboardFrame(
                 index=i,
                 narration=main_narration,
                 image_prompt=None,  # We're using user assets, not generating images
+                subtitle_zh=main_narration,
+                subtitle_en=frame_translations[i] if i < len(frame_translations) else "",
                 created_at=datetime.now()
             )
             
@@ -579,21 +756,30 @@ class AssetBasedPipeline(LinearVideoPipeline):
             for j, narration_text in enumerate(narrations, 1):
                 audio_path = Path(context.task_dir) / "frames" / f"{i:02d}_narration_{j}.mp3"
                 audio_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                await self.core.tts(
-                    text=narration_text,
-                    output_path=str(audio_path),
-                    voice_id=config.voice_id,
-                    speed=config.tts_speed
-                )
+
+                tts_params = {
+                    "text": narration_text,
+                    "output_path": str(audio_path),
+                    "inference_mode": config.tts_inference_mode,
+                }
+                if config.tts_inference_mode == "local":
+                    if config.voice_id:
+                        tts_params["voice"] = config.voice_id
+                    if config.tts_speed is not None:
+                        tts_params["speed"] = config.tts_speed
+                else:
+                    if config.tts_workflow:
+                        tts_params["workflow"] = config.tts_workflow
+                    if config.ref_audio:
+                        tts_params["ref_audio"] = config.ref_audio
+
+                await self.core.tts(**tts_params)
                 
                 narration_audios.append(str(audio_path))
                 logger.debug(f"  Narration {j}/{len(narrations)}: {narration_text[:30]}...")
             
             # Concatenate all narration audios for this scene
             if len(narration_audios) > 1:
-                from pixelle_video.utils.os_util import get_task_frame_path
-                
                 # Emit progress for combining audio
                 frame_progress = base_progress + ((i - 1) + 0.25) / total_frames * progress_range
                 self._emit_progress(ProgressEvent(
@@ -680,7 +866,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
             ))
             
             # Use FrameProcessor for proper composition
-            processed_frame = await self.core.frame_processor(
+            await self.core.frame_processor(
                 frame=frame,
                 storyboard=storyboard,
                 config=config,
@@ -768,7 +954,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
         Returns:
             Final context
         """
-        logger.success(f"🎉 Asset-based video generation complete!")
+        logger.success("🎉 Asset-based video generation complete!")
         logger.info(f"Video: {context.final_video_path}")
         
         # Emit completion
@@ -808,10 +994,17 @@ class AssetBasedPipeline(LinearVideoPipeline):
                 "n_scenes": len(storyboard.frames) if storyboard else 0,
                 "assets": ctx.request.get("assets", []),
                 "intent": ctx.request.get("intent"),
+                "content_mode": ctx.request.get("content_mode", "intent"),
+                "script_text": ctx.request.get("script_text"),
+                "script_split_mode": ctx.request.get("script_split_mode"),
                 "duration": ctx.request.get("duration"),
                 "source": ctx.request.get("source"),
                 "voice_id": ctx.request.get("voice_id"),
+                "tts_inference_mode": ctx.request.get("tts_inference_mode", "local"),
+                "tts_voice": ctx.request.get("tts_voice") or ctx.request.get("voice_id"),
+                "tts_workflow": ctx.request.get("tts_workflow"),
                 "tts_speed": ctx.request.get("tts_speed"),
+                "ref_audio": ctx.request.get("ref_audio"),
             }
             
             metadata = {

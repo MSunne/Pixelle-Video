@@ -290,8 +290,8 @@ def render_task_detail_modal(task_id: str, pixelle_video):
         # Display input parameters
         st.markdown(f"**{tr('history.detail.mode')}:** {input_params.get('mode', 'N/A')}")
         st.markdown(f"**{tr('history.detail.n_scenes')}:** {input_params.get('n_scenes', 'N/A')}")
-        st.markdown(f"**{tr('history.detail.tts_mode')}:** {input_params.get('tts_inference_mode', 'N/A')}")
-        st.markdown(f"**{tr('history.detail.voice')}:** {input_params.get('tts_voice', 'N/A')}")
+        st.markdown(f"**{tr('history.detail.tts_mode')}:** {input_params.get('tts_inference_mode', 'local')}")
+        st.markdown(f"**{tr('history.detail.voice')}:** {input_params.get('tts_voice', input_params.get('voice_id', 'N/A'))}")
         
         # Input text
         with st.expander(tr("history.detail.text"), expanded=True):
