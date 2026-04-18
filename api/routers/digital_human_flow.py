@@ -172,4 +172,9 @@ async def step4_check_status(task_id: str):
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if task.task_type != TaskType.DIGITAL_HUMAN_VIDEO:
+        raise HTTPException(
+            status_code=404,
+            detail="任务不属于数字人视频流程，请使用对应任务类型的专用进度接口",
+        )
     return task

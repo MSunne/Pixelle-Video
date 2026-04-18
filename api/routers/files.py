@@ -16,13 +16,77 @@ File service endpoints
 Provides access to generated files (videos, images, audio) and resource files.
 """
 
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
 
+from api.config import api_config
+from api.schemas.files import FileUploadResponse, UploadedFileInfo
+
 router = APIRouter(prefix="/files", tags=["文件服务"])
+
+
+@router.post("/upload", response_model=FileUploadResponse, include_in_schema=False)
+async def upload_files(
+    files: list[UploadFile] = File(..., description="One or more files to upload"),
+    subdir: str = Form("general", description="Optional logical upload folder name"),
+):
+    """
+    Upload one or more files for subsequent API usage.
+
+    Typical workflow:
+    1. `POST /api/files/upload`
+    2. Use returned `path` values in `/api/asset-video/generate/async`
+    3. Poll `/api/asset-video/tasks/{task_id}` or `/api/tasks/{task_id}`
+    """
+    try:
+        if not files:
+            raise HTTPException(status_code=400, detail="No files uploaded")
+
+        safe_subdir = Path(subdir).name or "general"
+        upload_dir = Path.cwd() / "temp" / "uploads" / safe_subdir / uuid.uuid4().hex[:12]
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        uploaded_files: list[UploadedFileInfo] = []
+        for upload in files:
+            original_name = Path(upload.filename or "upload.bin").name
+            file_bytes = await upload.read()
+            file_size = len(file_bytes)
+            if file_size > api_config.max_upload_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"File '{original_name}' exceeds max upload size "
+                        f"({api_config.max_upload_size} bytes)"
+                    ),
+                )
+
+            saved_name = f"{uuid.uuid4().hex[:8]}_{original_name}"
+            file_path = upload_dir / saved_name
+            file_path.write_bytes(file_bytes)
+
+            uploaded_files.append(
+                UploadedFileInfo(
+                    original_name=original_name,
+                    saved_name=saved_name,
+                    path=str(file_path.resolve()),
+                    size=file_size,
+                    content_type=upload.content_type,
+                )
+            )
+
+        return FileUploadResponse(
+            message=f"成功上传 {len(uploaded_files)} 个文件",
+            files=uploaded_files,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{file_path:path}")

@@ -32,34 +32,36 @@ _project_root = _script_dir.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-import argparse
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from loguru import logger
+import argparse  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 
-from api.config import api_config
-from api.tasks import task_manager
-from api.dependencies import shutdown_pixelle_video
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from loguru import logger  # noqa: E402
+
+from api.config import api_config  # noqa: E402
+from api.dependencies import shutdown_pixelle_video  # noqa: E402
 
 # Import routers
-from api.routers import (
-    health_router,
-    llm_router,
-    tts_router,
-    image_router,
-    content_router,
-    video_router,
-    asset_based_router,
-    tasks_router,
-    files_router,
-    resources_router,
-    frame_router,
-    digital_human_router,
-    digital_human_flow_router,
-    i2v_router,
+from api.routers import (  # noqa: E402
     action_transfer_router,
+    asset_based_router,
+    content_router,
+    custom_script_assets_router,
+    digital_human_flow_router,
+    digital_human_router,
+    files_router,
+    frame_router,
+    health_router,
+    i2v_router,
+    image_router,
+    llm_router,
+    resources_router,
+    tasks_router,
+    tts_router,
+    video_router,
 )
+from api.tasks import task_manager  # noqa: E402
 
 
 @asynccontextmanager
@@ -96,6 +98,7 @@ app = FastAPI(
     - 📝 **Content**: 自动化文案与内容生成
     - 🎬 **Video**: 端到端视频合成与生成
     - 📦 **自定义素材视频**: 上传图片/视频素材，生成带中英字幕的视频
+    - 🗣️ **自定义话术和素材**: 上传素材 + 固定文案 + 参考语音，异步生成视频并返回进度
     - 🧑 **数字人视频**: 口播模式（朗读文案） / 带货模式（商品图→AI带货视频）
     
     ### 🧑 数字人视频（推荐）
@@ -107,6 +110,20 @@ app = FastAPI(
     ### 🎬 通用视频生成
     - **同步模式**: `/api/video/generate/sync` - 适用于短视频 (< 30s)
     - **异步模式**: `/api/video/generate/async` - 适用于长视频
+
+    ### 📦 自定义素材 / 自定义话术和素材
+    1. 上传文件：`POST /api/files/upload`
+    2. 提交任务：`POST /api/asset-video/generate/async`
+    3. 查询进度：`GET /api/asset-video/tasks/{task_id}`
+
+    ### 🗣️ 自定义话术和素材（极简接口）
+    仅 3 个业务参数：
+    1. `assets`
+    2. `ref_audio`
+    3. `script_text`
+    
+    - 提交任务：`POST /api/custom-script-assets/generate/async`
+    - 查询进度：`GET /api/custom-script-assets/tasks/{task_id}`
     
     ### 快速开始
     1. 检查服务健康状态: `GET /health`
@@ -137,26 +154,27 @@ if api_config.cors_enabled:
 # ==============================================================================
 
 # Health check (no prefix)
-app.include_router(health_router)
+app.include_router(health_router, include_in_schema=False)
 
 # API routers (with /api prefix)
 app.include_router(llm_router, prefix=api_config.api_prefix)
-app.include_router(tts_router, prefix=api_config.api_prefix)
-app.include_router(image_router, prefix=api_config.api_prefix)
-app.include_router(content_router, prefix=api_config.api_prefix)
-app.include_router(video_router, prefix=api_config.api_prefix)
-app.include_router(asset_based_router, prefix=api_config.api_prefix)
-app.include_router(digital_human_router, prefix=api_config.api_prefix)
+app.include_router(tts_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(image_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(content_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(video_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(asset_based_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(custom_script_assets_router, prefix=api_config.api_prefix)
+app.include_router(digital_human_router, prefix=api_config.api_prefix, include_in_schema=False)
 app.include_router(digital_human_flow_router, prefix=api_config.api_prefix)
-app.include_router(i2v_router, prefix=api_config.api_prefix)
-app.include_router(action_transfer_router, prefix=api_config.api_prefix)
-app.include_router(tasks_router, prefix=api_config.api_prefix)
+app.include_router(i2v_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(action_transfer_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(tasks_router, prefix=api_config.api_prefix, include_in_schema=False)
 app.include_router(files_router, prefix=api_config.api_prefix)
-app.include_router(resources_router, prefix=api_config.api_prefix)
-app.include_router(frame_router, prefix=api_config.api_prefix)
+app.include_router(resources_router, prefix=api_config.api_prefix, include_in_schema=False)
+app.include_router(frame_router, prefix=api_config.api_prefix, include_in_schema=False)
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
     """Root endpoint with API information"""
     return {
@@ -165,20 +183,11 @@ async def root():
         "docs": api_config.docs_url,
         "health": "/health",
         "api": {
-            "digital_human": f"{api_config.api_prefix}/digital-human",
             "digital_human_flow": f"{api_config.api_prefix}/step3-generate-video",
-            "i2v": f"{api_config.api_prefix}/i2v",
-            "action_transfer": f"{api_config.api_prefix}/action-transfer",
-            "llm": f"{api_config.api_prefix}/llm",
-            "tts": f"{api_config.api_prefix}/tts",
-            "image": f"{api_config.api_prefix}/image",
-            "content": f"{api_config.api_prefix}/content",
-            "video": f"{api_config.api_prefix}/video",
-            "asset_video": f"{api_config.api_prefix}/asset-video",
-            "tasks": f"{api_config.api_prefix}/tasks",
-            "files": f"{api_config.api_prefix}/files",
-            "resources": f"{api_config.api_prefix}/resources",
-            "frame": f"{api_config.api_prefix}/frame",
+            "custom_script_assets": f"{api_config.api_prefix}/custom-script-assets",
+            "task_status": f"{api_config.api_prefix}/step4-check-status/{{task_id}}",
+            "download": f"{api_config.api_prefix}/files/{{file_path}}",
+            "llm_models": f"{api_config.api_prefix}/llm/models",
         }
     }
 
@@ -218,4 +227,3 @@ Press Ctrl+C to stop the server
         proxy_headers=True,
         forwarded_allow_ips="*",
     )
-

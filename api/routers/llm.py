@@ -75,7 +75,7 @@ async def list_llm_models():
     )
 
 
-@router.post("/chat", response_model=LLMChatResponse)
+@router.post("/chat", response_model=LLMChatResponse, include_in_schema=False)
 async def llm_chat(
     request: LLMChatRequest,
     pixelle_video: PixelleVideoDep
@@ -118,5 +118,4 @@ async def llm_chat(
     except Exception as e:
         logger.error(f"LLM chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 

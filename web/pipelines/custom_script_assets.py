@@ -22,16 +22,21 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 import streamlit as st
 from loguru import logger
 
 from pixelle_video.config import config_manager
-from pixelle_video.models.progress import ProgressEvent
 from web.components.content_input import render_version_info
 from web.i18n import get_language, tr
 from web.pipelines.base import PipelineUI, register_pipeline_ui
 from web.utils.async_helpers import run_async
-from web.utils.streamlit_helpers import check_and_warn_selfhost_workflow
+
+API_BASE_URL = (
+    os.getenv("PIXELLE_WEB_API_BASE_URL")
+    or os.getenv("PIXELLE_API_BASE_URL")
+    or "http://127.0.0.1:8000"
+)
 
 
 class CustomScriptAssetsPipelineUI(PipelineUI):
@@ -66,6 +71,34 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
             }
             self._render_output_preview(pixelle_video, video_params)
 
+    def _build_api_client(self) -> httpx.Client:
+        return httpx.Client(timeout=httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=60.0))
+
+    def _poll_task(self, client: httpx.Client, task_id: str, progress_bar, status_text) -> dict:
+        while True:
+            response = client.get(f"{API_BASE_URL}/api/custom-script-assets/tasks/{task_id}")
+            response.raise_for_status()
+            task = response.json()
+            status = task.get("status", "")
+            progress = task.get("progress") or {}
+            percentage = int(progress.get("percentage") or 0)
+            message = progress.get("message") or status or tr("status.generating")
+
+            if status == "completed":
+                progress_bar.progress(100)
+                status_text.text(tr("status.success"))
+                return task
+
+            if status == "failed":
+                raise RuntimeError(task.get("error") or message)
+
+            if status == "cancelled":
+                raise RuntimeError(message or "Task cancelled")
+
+            progress_bar.progress(max(0, min(percentage, 99)))
+            status_text.text(message)
+            time.sleep(2)
+
     def _render_asset_and_script_input(self) -> dict:
         with st.container(border=True):
             st.markdown(f"**{tr('asset_based.section.assets')}**")
@@ -84,25 +117,14 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                 key="custom_script_asset_files",
             )
 
-            asset_paths = []
             if uploaded_files:
-                session_id = str(uuid.uuid4()).replace("-", "")[:12]
-                temp_dir = Path(f"temp/assets_{session_id}")
-                temp_dir.mkdir(parents=True, exist_ok=True)
-
-                for uploaded_file in uploaded_files:
-                    file_path = temp_dir / uploaded_file.name
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    asset_paths.append(str(file_path.absolute()))
-
-                st.success(tr("asset_based.assets.count", count=len(asset_paths)))
+                st.success(tr("asset_based.assets.count", count=len(uploaded_files)))
 
                 with st.expander(tr("asset_based.assets.preview"), expanded=True):
                     cols = st.columns(3)
-                    for i, (file, path) in enumerate(zip(uploaded_files, asset_paths)):
+                    for i, file in enumerate(uploaded_files):
                         with cols[i % 3]:
-                            ext = Path(path).suffix.lower()
+                            ext = Path(file.name).suffix.lower()
                             if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
                                 st.image(file, caption=file.name, use_container_width=True)
                             elif ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
@@ -128,68 +150,31 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                 key="custom_script_assets_text",
             )
 
-            split_mode_options = {
-                "paragraph": tr("split.mode_paragraph"),
-                "line": tr("split.mode_line"),
-                "sentence": tr("split.mode_sentence"),
-            }
-            script_split_mode = st.selectbox(
-                tr("split.mode_label"),
-                options=list(split_mode_options.keys()),
-                format_func=lambda x: split_mode_options[x],
-                index=0,
-                help=tr("split.mode_help"),
-                key="custom_script_assets_split_mode",
-            )
-
         return {
-            "assets": asset_paths,
+            "asset_files": uploaded_files or [],
             "script_text": script_text,
-            "script_split_mode": script_split_mode,
         }
 
     def _render_service_and_voice_config(self, pixelle_video: Any) -> dict:
         with st.container(border=True):
-            st.markdown(f"**{tr('asset_based.section.source')}**")
+            st.markdown(f"**{tr('custom_script_assets.section.service')}**")
 
             with st.expander(tr("help.feature_description"), expanded=False):
                 st.markdown(f"**{tr('help.what')}**")
-                st.markdown(tr("asset_based.source.what"))
+                st.markdown(tr("custom_script_assets.service.what"))
                 st.markdown(f"**{tr('help.how')}**")
-                st.markdown(tr("asset_based.source.how"))
-
-            source_options = {
-                "runninghub": tr("asset_based.source.runninghub"),
-                "selfhost": tr("asset_based.source.selfhost"),
-            }
+                st.markdown(tr("custom_script_assets.service.how"))
 
             comfyui_config = config_manager.get_comfyui_config()
             has_runninghub = bool(comfyui_config.get("runninghub_api_key"))
-            has_selfhost = bool(comfyui_config.get("comfyui_url"))
 
-            source = st.radio(
-                tr("asset_based.source.select"),
-                options=list(source_options.keys()),
-                format_func=lambda x: source_options[x],
-                index=0,
-                horizontal=True,
-                key="custom_script_assets_source",
-                label_visibility="collapsed",
-            )
-
-            if source == "runninghub":
-                if not has_runninghub:
-                    st.warning(tr("asset_based.source.runninghub_not_configured"))
-                else:
-                    st.info(tr("asset_based.source.runninghub_hint"))
+            st.info(tr("custom_script_assets.service.runninghub_only"))
+            if not has_runninghub:
+                st.warning(tr("asset_based.source.runninghub_not_configured"))
             else:
-                if not has_selfhost:
-                    st.warning(tr("asset_based.source.selfhost_not_configured"))
-                else:
-                    st.info(tr("asset_based.source.selfhost_hint"))
-                    check_and_warn_selfhost_workflow("selfhost/analyse_image.json")
+                st.info(tr("asset_based.source.runninghub_hint"))
 
-        workflow_path = f"{source}/tts_index2.json"
+        workflow_path = "runninghub/tts_index2.json"
 
         with st.container(border=True):
             st.markdown(f"**{tr('custom_script_assets.section.voice')}**")
@@ -263,10 +248,7 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                                 logger.exception(e)
 
         return {
-            "source": source,
-            "tts_inference_mode": "comfyui",
-            "tts_workflow": workflow_path,
-            "ref_audio": str(ref_audio_path) if ref_audio_path else None,
+            "ref_audio_file": ref_audio_file,
         }
 
     def _render_output_preview(self, pixelle_video: Any, video_params: dict):
@@ -276,11 +258,11 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
             if not config_manager.validate():
                 st.warning(tr("settings.not_configured"))
 
-            assets = video_params.get("assets", [])
+            asset_files = video_params.get("asset_files", [])
             script_text = (video_params.get("script_text") or "").strip()
-            ref_audio = video_params.get("ref_audio")
+            ref_audio_file = video_params.get("ref_audio_file")
 
-            if not assets:
+            if not asset_files:
                 st.info(tr("asset_based.output.no_assets"))
                 st.button(
                     tr("btn.generate"),
@@ -302,7 +284,7 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                 )
                 return
 
-            if not ref_audio:
+            if not ref_audio_file:
                 st.info(tr("custom_script_assets.output.no_ref_audio"))
                 st.button(
                     tr("btn.generate"),
@@ -313,7 +295,7 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                 )
                 return
 
-            st.info(tr("custom_script_assets.output.ready", count=len(assets)))
+            st.info(tr("custom_script_assets.output.ready", count=len(asset_files)))
 
             if st.button(
                 tr("btn.generate"),
@@ -330,94 +312,70 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                 start_time = time.time()
 
                 try:
-                    from pixelle_video.pipelines.asset_based import AssetBasedPipeline
+                    with self._build_api_client() as client:
+                        status_text.text(tr("custom_script_assets.progress.submitting"))
+                        progress_bar.progress(10)
 
-                    pipeline = AssetBasedPipeline(pixelle_video)
-
-                    def update_progress(event: ProgressEvent):
-                        if event.event_type == "analyzing_assets":
-                            if event.extra_info == "start":
-                                message = tr("asset_based.progress.analyzing_start", total=event.frame_total)
-                            else:
-                                message = tr("asset_based.progress.analyzing_complete", count=event.frame_total)
-                        elif event.event_type == "analyzing_asset":
-                            message = tr(
-                                "asset_based.progress.analyzing_asset",
-                                current=event.frame_current,
-                                total=event.frame_total,
-                                name=event.extra_info or "",
+                        multipart_files = []
+                        for uploaded_file in asset_files:
+                            multipart_files.append(
+                                (
+                                    "assets",
+                                    (
+                                        uploaded_file.name,
+                                        uploaded_file.getvalue(),
+                                        uploaded_file.type or "application/octet-stream",
+                                    ),
+                                )
                             )
-                        elif event.event_type == "generating_script":
-                            if event.extra_info == "complete":
-                                message = tr("asset_based.progress.script_complete")
-                            else:
-                                message = tr("asset_based.progress.generating_script")
-                        elif event.event_type == "frame_step":
-                            action_key = f"progress.step_{event.action}"
-                            action_text = tr(action_key)
-                            message = tr(
-                                "progress.frame_step",
-                                current=event.frame_current,
-                                total=event.frame_total,
-                                step=event.step,
-                                action=action_text,
+                        multipart_files.append(
+                            (
+                                "ref_audio",
+                                (
+                                    ref_audio_file.name,
+                                    ref_audio_file.getvalue(),
+                                    ref_audio_file.type or "application/octet-stream",
+                                ),
                             )
-                        elif event.event_type == "processing_frame":
-                            message = tr(
-                                "progress.frame",
-                                current=event.frame_current,
-                                total=event.frame_total,
-                            )
-                        elif event.event_type == "concatenating":
-                            if event.extra_info == "complete":
-                                message = tr("asset_based.progress.concat_complete")
-                            else:
-                                message = tr("progress.concatenating")
-                        elif event.event_type == "completed":
-                            message = tr("progress.completed")
-                        else:
-                            message = tr(f"progress.{event.event_type}")
-
-                        status_text.text(message)
-                        progress_bar.progress(min(int(event.progress * 100), 99))
-
-                    ctx = run_async(
-                        pipeline(
-                            assets=assets,
-                            content_mode="script",
-                            script_text=script_text,
-                            script_split_mode=video_params.get("script_split_mode", "paragraph"),
-                            source=video_params.get("source", "runninghub"),
-                            tts_inference_mode="comfyui",
-                            tts_workflow=video_params.get("tts_workflow"),
-                            ref_audio=ref_audio,
-                            progress_callback=update_progress,
                         )
-                    )
+                        response = client.post(
+                            f"{API_BASE_URL}/api/custom-script-assets/generate/async",
+                            data={"script_text": script_text},
+                            files=multipart_files,
+                        )
+                        response.raise_for_status()
+                        task_id = response.json()["task_id"]
+
+                        status_text.text(tr("custom_script_assets.progress.polling"))
+                        progress_bar.progress(20)
+
+                        task = self._poll_task(client, task_id, progress_bar, status_text)
+                        result = task.get("result") or {}
 
                     total_time = time.time() - start_time
 
                     progress_bar.progress(100)
                     status_text.text(tr("status.success"))
-                    st.success(tr("status.video_generated", path=ctx.final_video_path))
+                    video_url = result.get("video_url", "")
+                    st.success(tr("status.video_generated", path=video_url or task_id))
                     st.markdown("---")
 
-                    if os.path.exists(ctx.final_video_path):
-                        file_size_mb = os.path.getsize(ctx.final_video_path) / (1024 * 1024)
-                        n_scenes = len(ctx.storyboard.frames) if ctx.storyboard else 0
+                    if video_url:
+                        file_size_mb = (result.get("file_size", 0) or 0) / (1024 * 1024)
+                        duration = result.get("duration", 0)
 
                         info_text = (
                             f"⏱️ {tr('info.generation_time')} {total_time:.1f}s   "
                             f"📦 {file_size_mb:.2f}MB   "
-                            f"🎬 {n_scenes}{tr('info.scenes_unit')}"
+                            f"🎬 {duration:.1f}s"
                         )
                         st.caption(info_text)
                         st.markdown("---")
-                        st.video(ctx.final_video_path)
-
-                        with open(ctx.final_video_path, "rb") as video_file:
-                            video_bytes = video_file.read()
-                            video_filename = os.path.basename(ctx.final_video_path)
+                        st.video(video_url)
+                        if os.path.exists(video_url):
+                            with open(video_url, "rb") as video_file:
+                                video_bytes = video_file.read()
+                            video_filename = Path(video_url).name or "asset_video.mp4"
                             st.download_button(
                                 label="⬇️ 下载视频" if get_language() == "zh_CN" else "⬇️ Download Video",
                                 data=video_bytes,
@@ -426,7 +384,7 @@ class CustomScriptAssetsPipelineUI(PipelineUI):
                                 use_container_width=True,
                             )
                     else:
-                        st.error(tr("status.video_not_found", path=ctx.final_video_path))
+                        st.error(tr("status.video_not_found", path=task_id))
 
                 except Exception as e:
                     status_text.text("")

@@ -19,10 +19,23 @@ from api.schemas.asset_based import (
     AssetBasedVideoRequest,
     AssetBasedVideoResponse,
 )
-from api.tasks import TaskType, task_manager
+from api.tasks import Task, TaskType, task_manager
 from api.utils.helpers import cleanup_after_upload, path_to_url, upload_to_s3_or_fallback
 
 router = APIRouter(prefix="/asset-video", tags=["自定义素材视频生成"])
+
+
+@router.get("/tasks/{task_id}", response_model=Task)
+async def get_asset_video_task(task_id: str):
+    """
+    Query async task progress for asset-based video generation.
+
+    Returns current progress, status, and final result once completed.
+    """
+    task = task_manager.get_task(task_id)
+    if not task or task.task_type != TaskType.ASSET_BASED_VIDEO:
+        raise HTTPException(status_code=404, detail=f"Asset video task {task_id} not found")
+    return task
 
 
 @router.post("/generate/sync", response_model=AssetBasedVideoResponse)
